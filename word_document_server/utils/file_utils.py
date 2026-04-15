@@ -1,5 +1,5 @@
 """
-File utility functions for Word Document Server.
+File utility functions for WaDocx MCP.
 """
 import os
 from typing import Tuple, Optional
@@ -83,3 +83,4 @@ def ensure_docx_extension(filename: str) -> str:
     if not filename.endswith('.docx'):
         return filename + '.docx'
     return filename
+

@@ -1,5 +1,5 @@
 """
-Comment extraction tools for Word Document Server.
+Comment extraction tools for WaDocx MCP.
 
 These tools provide high-level interfaces for extracting and analyzing
 comments from Word documents through the MCP protocol.

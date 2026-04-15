@@ -1,6 +1,6 @@
 # Render Deployment Guide
 
-This document explains how to deploy the Office Word MCP Server on Render.
+This document explains how to deploy WaDocx MCP on Render.
 
 ## Required Environment Variables
 
@@ -24,7 +24,7 @@ Set the following environment variables in your Render service:
 ## How to Set Environment Variables
 
 1. Go to your Render dashboard: https://dashboard.render.com
-2. Navigate to your service: `Office-Word-MCP-Server`
+2. Navigate to your service: `wadocx`
 3. Click on "Environment" in the left sidebar
 4. Add the environment variable:
    - Key: `MCP_TRANSPORT`
@@ -36,7 +36,7 @@ Set the following environment variables in your Render service:
 After setting the environment variables:
 1. Render will automatically redeploy your service
 2. The server will start with SSE transport on the port provided by Render
-3. Access your server at: `https://office-word-mcp-server-bzlp.onrender.com/sse`
+3. Access your server at: `https://wadocx.onrender.com/sse`
 
 ## Health Check Endpoint
 

@@ -1,5 +1,5 @@
 """
-Style-related functions for Word Document Server.
+Style-related functions for WaDocx MCP.
 """
 from docx.shared import Pt
 from docx.enum.style import WD_STYLE_TYPE
@@ -132,3 +132,4 @@ def create_style(doc, style_name, style_type, base_style=None, font_properties=N
                 new_style.paragraph_format.line_spacing = paragraph_properties['spacing']
         
         return new_style
+

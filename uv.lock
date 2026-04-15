@@ -344,8 +344,8 @@ wheels = [
 ]
 
 [[package]]
-name = "office-word-mcp-server"
-version = "1.1.0"
+name = "wadocx"
+version = "1.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "docx2pdf" },

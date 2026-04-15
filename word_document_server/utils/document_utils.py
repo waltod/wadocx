@@ -1,13 +1,14 @@
 """
-Document utility functions for Word Document Server.
+Document utility functions for WaDocx MCP.
 """
 import json
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from docx import Document
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from docx.text.paragraph import Paragraph
 
 
 def get_document_properties(doc_path: str) -> Dict[str, Any]:
@@ -437,6 +438,151 @@ def get_paragraph_style(el):
             return pStyle.attrib['w:val']
     return None
 
+
+def normalize_paragraph_text(text: Optional[str]) -> str:
+    """Normalize paragraph text for stable matching."""
+    return " ".join((text or "").split()).strip()
+
+
+def is_paragraph_element(el) -> bool:
+    """Return True when the XML element is a paragraph."""
+    return str(getattr(el, "tag", "")).endswith("}p")
+
+
+def is_table_element(el) -> bool:
+    """Return True when the XML element is a table."""
+    return str(getattr(el, "tag", "")).endswith("}tbl")
+
+
+def get_body_elements(doc) -> List[Any]:
+    """Return body elements excluding section properties."""
+    elements = []
+    for el in doc.element.body.iterchildren():
+        if el.tag == qn('w:sectPr'):
+            continue
+        elements.append(el)
+    return elements
+
+
+def get_element_text(el) -> str:
+    """Extract visible text from a paragraph element."""
+    if not is_paragraph_element(el):
+        return ""
+    text_tag = qn("w:t")
+    return normalize_paragraph_text(
+        "".join(node.text or "" for node in el.iter() if getattr(node, "tag", None) == text_tag)
+    )
+
+
+def get_paragraph_from_element(doc, el):
+    """Wrap a paragraph XML node as a python-docx paragraph."""
+    if not is_paragraph_element(el):
+        return None
+    for para in doc.paragraphs:
+        if para._element == el:
+            return para
+    return None
+
+
+def is_heading_or_toc_element(doc, el) -> bool:
+    """Return True if the body element is a heading or TOC paragraph."""
+    para = get_paragraph_from_element(doc, el)
+    if para is None or not para.style:
+        return False
+    style_name = para.style.name.lower()
+    return style_name.startswith(("heading", "título", "toc"))
+
+
+def remove_body_elements(doc, start_idx: int, end_idx: int) -> int:
+    """Remove a contiguous body-element range and return the count removed."""
+    elements = get_body_elements(doc)
+    removed = 0
+    for el in elements[start_idx:end_idx]:
+        parent = el.getparent()
+        if parent is not None:
+            parent.remove(el)
+            removed += 1
+    return removed
+
+
+def insert_text_paragraph_after_element(doc, anchor_element, text: str, style_name: Optional[str] = None):
+    """Insert a paragraph after a body element and return the new paragraph element."""
+    new_para = doc.add_paragraph(text)
+    if style_name:
+        try:
+            new_para.style = style_name
+        except KeyError:
+            pass
+    anchor_element.addnext(new_para._element)
+    return new_para._element
+
+
+def insert_content_blocks_after_element(
+    doc,
+    anchor_element,
+    blocks: List[Dict[str, Any]],
+    default_paragraph_style: Optional[str] = "Normal"
+) -> int:
+    """
+    Insert parsed content blocks after an anchor element.
+
+    Supported block types: paragraph, heading, list, table.
+    Returns the number of body elements inserted.
+    """
+    current_element = anchor_element
+    inserted = 0
+
+    for block in blocks:
+        block_type = block.get("type", "paragraph")
+
+        if block_type == "heading":
+            level = max(1, min(int(block.get("level", 1)), 9))
+            new_para = doc.add_heading(block.get("text", ""), level=level)
+            current_element.addnext(new_para._element)
+            current_element = new_para._element
+            inserted += 1
+            continue
+
+        if block_type == "list":
+            ordered = bool(block.get("ordered"))
+            style_name = "List Number" if ordered else "List Bullet"
+            num_id = 2 if ordered else 1
+            for item in block.get("items", []):
+                new_para = doc.add_paragraph(item)
+                try:
+                    new_para.style = style_name
+                except KeyError:
+                    pass
+                add_bullet_numbering(new_para, num_id=num_id, level=0)
+                current_element.addnext(new_para._element)
+                current_element = new_para._element
+                inserted += 1
+            continue
+
+        if block_type == "table":
+            rows = block.get("rows", [])
+            if not rows:
+                continue
+            column_count = max(len(row) for row in rows)
+            table = doc.add_table(rows=len(rows), cols=column_count)
+            for row_idx, row in enumerate(rows):
+                for col_idx, value in enumerate(row):
+                    table.cell(row_idx, col_idx).text = value
+            current_element.addnext(table._element)
+            current_element = table._element
+            inserted += 1
+            continue
+
+        current_element = insert_text_paragraph_after_element(
+            doc,
+            current_element,
+            block.get("text", ""),
+            block.get("style", default_paragraph_style)
+        )
+        inserted += 1
+
+    return inserted
+
 # --- Main: Delete everything under a header until next heading/TOC ---
 def delete_block_under_header(doc, header_text):
     """
@@ -616,3 +762,155 @@ def replace_block_between_manual_anchors(
         anchor_para = new_para
     doc.save(doc_path)
     return f"Replaced content between '{start_anchor_text}' and '{end_anchor_text or 'next logical header'}' with {len(new_paragraphs)} paragraph(s), style: {style_to_use}, removed {len(to_remove)} elements."
+
+
+# Stable body-element-based replacements. These later definitions intentionally
+# override the earlier paragraph-index implementations above.
+def delete_block_under_header(doc, header_text):
+    """
+    Remove all body elements after a header paragraph and before the next
+    heading/TOC block. Returns (header_element, elements_removed).
+    """
+    header_text_normalized = normalize_paragraph_text(header_text).lower()
+    elements = get_body_elements(doc)
+    header_idx = None
+    header_element = None
+
+    for i, el in enumerate(elements):
+        if not is_paragraph_element(el):
+            continue
+        para = get_paragraph_from_element(doc, el)
+        if para is None or is_toc_paragraph(para):
+            continue
+        if normalize_paragraph_text(para.text).lower() == header_text_normalized:
+            header_idx = i
+            header_element = el
+            break
+
+    if header_idx is None:
+        return None, 0
+
+    end_idx = len(elements)
+    for i in range(header_idx + 1, len(elements)):
+        if is_heading_or_toc_element(doc, elements[i]):
+            end_idx = i
+            break
+
+    removed_count = remove_body_elements(doc, header_idx + 1, end_idx)
+    return header_element, removed_count
+
+
+def replace_paragraph_block_below_header(
+    doc_path: str,
+    header_text: str,
+    new_paragraphs: list,
+    detect_block_end_fn=None,
+    new_paragraph_style: str = None
+) -> str:
+    """
+    Replace all body content beneath a header until the next heading or TOC.
+    """
+    from docx import Document
+    import os
+    if not os.path.exists(doc_path):
+        return f"Document {doc_path} not found."
+
+    doc = Document(doc_path)
+    header_el, removed_count = delete_block_under_header(doc, header_text)
+    if header_el is None:
+        return f"Header '{header_text}' not found in document."
+
+    style_to_use = new_paragraph_style or "Normal"
+    current_element = header_el
+    inserted = 0
+    for text in new_paragraphs:
+        current_element = insert_text_paragraph_after_element(doc, current_element, text, style_to_use)
+        inserted += 1
+
+    doc.save(doc_path)
+    return (
+        f"Replaced content under '{header_text}' with {inserted} paragraph(s), "
+        f"style: {style_to_use}, removed {removed_count} body element(s)."
+    )
+
+
+def replace_block_between_manual_anchors(
+    doc_path: str,
+    start_anchor_text: str,
+    new_paragraphs: list,
+    end_anchor_text: str = None,
+    match_fn=None,
+    new_paragraph_style: str = None
+) -> str:
+    """
+    Replace all body content between anchor paragraphs.
+
+    If end_anchor_text is omitted, replacement stops at the next heading/TOC
+    or the end of the document body.
+    """
+    from docx import Document
+    import os
+    if not os.path.exists(doc_path):
+        return f"Document {doc_path} not found."
+
+    doc = Document(doc_path)
+    elements = get_body_elements(doc)
+    start_idx = None
+    end_idx = None
+    start_anchor_normalized = normalize_paragraph_text(start_anchor_text)
+    end_anchor_normalized = normalize_paragraph_text(end_anchor_text) if end_anchor_text else None
+
+    for i, el in enumerate(elements):
+        if not is_paragraph_element(el):
+            continue
+        p_text = get_element_text(el)
+        if match_fn:
+            if match_fn(p_text, el):
+                start_idx = i
+                break
+        elif p_text == start_anchor_normalized:
+            start_idx = i
+            break
+
+    if start_idx is None:
+        return f"Start anchor '{start_anchor_text}' not found."
+
+    if end_anchor_text:
+        for i in range(start_idx + 1, len(elements)):
+            el = elements[i]
+            if not is_paragraph_element(el):
+                continue
+            p_text = get_element_text(el)
+            if match_fn:
+                if match_fn(p_text, el, is_end=True):
+                    end_idx = i
+                    break
+            elif p_text == end_anchor_normalized:
+                end_idx = i
+                break
+    else:
+        for i in range(start_idx + 1, len(elements)):
+            if is_heading_or_toc_element(doc, elements[i]):
+                end_idx = i
+                break
+
+    removed_count = remove_body_elements(
+        doc,
+        start_idx + 1,
+        end_idx if end_idx is not None else len(elements)
+    )
+
+    current_element = get_body_elements(doc)[start_idx]
+    style_to_use = new_paragraph_style or "Normal"
+    inserted = 0
+    for text in new_paragraphs:
+        current_element = insert_text_paragraph_after_element(doc, current_element, text, style_to_use)
+        inserted += 1
+
+    doc.save(doc_path)
+    return (
+        f"Replaced content between '{start_anchor_text}' and "
+        f"'{end_anchor_text or 'next heading/TOC/end'}' with {inserted} paragraph(s), "
+        f"style: {style_to_use}, removed {removed_count} body element(s)."
+    )
+

@@ -1,5 +1,5 @@
 """
-Unprotect document functionality for the Word Document Server.
+Unprotect document functionality for the WaDocx MCP.
 
 This module handles removing document protection.
 """
@@ -76,3 +76,4 @@ def remove_protection_info(filename: str, password: Optional[str] = None) -> Tup
         return True, "Protection removed successfully"
     except Exception as e:
         return False, f"Error removing protection: {str(e)}"
+

@@ -6,6 +6,12 @@ import sys
 import shutil     
 import platform
 
+PACKAGE_NAME = "wadocx"
+SERVER_NAME = "wadocx-mcp"
+SCRIPT_NAME = "wadocx_mcp.py"
+CLI_NAME = "wadocx_mcp"
+MODULE_NAME = "wadocx"
+
 def check_prerequisites():
     """
     Check if necessary prerequisites are installed
@@ -21,10 +27,10 @@ def check_prerequisites():
     uv_installed = shutil.which("uv") is not None
     uvx_installed = shutil.which("uvx") is not None
     
-    # Check if word-document-server is already installed via pip
+    # Check if WaDocx is already installed via pip
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "show", "word-document-server"],
+            [sys.executable, "-m", "pip", "show", PACKAGE_NAME],
             capture_output=True,
             text=True,
             check=False
@@ -173,7 +179,7 @@ def setup_venv():
 
 def generate_mcp_config_local(python_path, transport_config):
     """
-    Generate MCP configuration for locally installed word-document-server
+    Generate MCP configuration for a local WaDocx checkout
     
     Parameters:
     - python_path: Path to Python interpreter in the virtual environment
@@ -184,8 +190,8 @@ def generate_mcp_config_local(python_path, transport_config):
     # Get absolute path of the directory containing the current script
     base_path = os.path.abspath(os.path.dirname(__file__))
     
-    # Path to Word Document Server script
-    server_script_path = os.path.join(base_path, 'word_mcp_server.py')
+    # Path to WaDocx launcher script
+    server_script_path = os.path.join(base_path, SCRIPT_NAME)
     
     # Build environment variables
     env = {
@@ -211,7 +217,7 @@ def generate_mcp_config_local(python_path, transport_config):
     # Create MCP configuration dictionary
     config = {
         "mcpServers": {
-            "word-document-server": {
+            SERVER_NAME: {
                 "command": python_path,
                 "args": [server_script_path],
                 "env": env
@@ -228,7 +234,7 @@ def generate_mcp_config_local(python_path, transport_config):
 
 def generate_mcp_config_uvx(transport_config):
     """
-    Generate MCP configuration for PyPI-installed word-document-server using UVX
+    Generate MCP configuration for a PyPI-installed WaDocx package using UVX
     
     Parameters:
     - transport_config: Transport configuration dictionary
@@ -261,9 +267,9 @@ def generate_mcp_config_uvx(transport_config):
     # Create MCP configuration dictionary
     config = {
         "mcpServers": {
-            "word-document-server": {
+            SERVER_NAME: {
                 "command": "uvx",
-                "args": ["--from", "word-mcp-server", "word_mcp_server"],
+                "args": ["--from", PACKAGE_NAME, CLI_NAME],
                 "env": env
             }
         }
@@ -278,7 +284,7 @@ def generate_mcp_config_uvx(transport_config):
 
 def generate_mcp_config_module(transport_config):
     """
-    Generate MCP configuration for PyPI-installed word-document-server using Python module
+    Generate MCP configuration for a PyPI-installed WaDocx package using Python module
     
     Parameters:
     - transport_config: Transport configuration dictionary
@@ -311,9 +317,9 @@ def generate_mcp_config_module(transport_config):
     # Create MCP configuration dictionary
     config = {
         "mcpServers": {
-            "word-document-server": {
+            SERVER_NAME: {
                 "command": sys.executable,
-                "args": ["-m", "word_document_server"],
+                "args": ["-m", MODULE_NAME],
                 "env": env
             }
         }
@@ -328,17 +334,17 @@ def generate_mcp_config_module(transport_config):
 
 def install_from_pypi():
     """
-    Install word-document-server from PyPI
+    Install WaDocx from PyPI
     
     Returns: True if successful, False otherwise
     """
-    print("\nInstalling word-document-server from PyPI...")
+    print(f"\nInstalling {PACKAGE_NAME} from PyPI...")
     try:
-        subprocess.run([sys.executable, "-m", "pip", "install", "word-mcp-server"], check=True)
-        print("word-mcp-server successfully installed from PyPI!")
+        subprocess.run([sys.executable, "-m", "pip", "install", PACKAGE_NAME], check=True)
+        print(f"{PACKAGE_NAME} successfully installed from PyPI!")
         return True
     except subprocess.CalledProcessError:
-        print("Failed to install word-mcp-server from PyPI.")
+        print(f"Failed to install {PACKAGE_NAME} from PyPI.")
         return False
 
 def print_config_instructions(config_path, transport_config):
@@ -393,7 +399,7 @@ def create_package_structure():
     init_path = os.path.join(base_path, '__init__.py')
     if not os.path.exists(init_path):
         with open(init_path, 'w') as f:
-            f.write('# Word Document MCP Server')
+            f.write('# WaDocx MCP')
         print(f"Created __init__.py at: {init_path}")
     
     # Create requirements.txt file
@@ -433,8 +439,8 @@ if __name__ == '__main__':
         print("Error: Python 3.8 or higher is required.")
         sys.exit(1)
     
-    print("Word Document MCP Server Setup (Multi-Transport)")
-    print("===============================================\n")
+    print("WaDocx MCP Setup (Multi-Transport)")
+    print("==================================\n")
     
     # Create necessary files
     create_package_structure()
@@ -442,9 +448,9 @@ if __name__ == '__main__':
     # Get transport configuration
     transport_config = get_transport_choice()
     
-    # If word-document-server is already installed, offer config options
+    # If WaDocx is already installed, offer config options
     if word_server_installed:
-        print("word-document-server is already installed via pip.")
+        print(f"{PACKAGE_NAME} is already installed via pip.")
         
         if uvx_installed:
             print("\nOptions:")
@@ -485,9 +491,9 @@ if __name__ == '__main__':
                 print("Invalid choice. Exiting.")
                 sys.exit(1)
     
-    # If word-document-server is not installed, offer installation options
+    # If WaDocx is not installed, offer installation options
     else:
-        print("word-document-server is not installed.")
+        print(f"{PACKAGE_NAME} is not installed.")
         
         print("\nOptions:")
         print("1. Install from PyPI (recommended)")
@@ -512,7 +518,7 @@ if __name__ == '__main__':
             print("Invalid choice. Exiting.")
             sys.exit(1)
     
-    print("\nSetup complete! You can now use the Word Document MCP server with compatible clients like Claude Desktop.")
+    print("\nSetup complete! You can now use WaDocx MCP with compatible clients like Claude Desktop or Codex.")
     print("\nTransport Summary:")
     print(f"  - Transport: {transport_config['transport']}")
     if transport_config['transport'] != 'stdio':

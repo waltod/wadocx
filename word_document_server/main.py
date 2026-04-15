@@ -1,5 +1,5 @@
 """
-Main entry point for the Word Document MCP Server.
+Main entry point for WaDocx MCP.
 Acts as the central controller for the MCP server that handles Word document operations.
 Supports multiple transports: stdio, sse, and streamable-http using standalone FastMCP.
 """
@@ -22,7 +22,8 @@ from word_document_server.tools import (
     protection_tools,
     footnote_tools,
     extended_document_tools,
-    comment_tools
+    comment_tools,
+    markdown_tools
 )
 from word_document_server.tools.content_tools import replace_paragraph_block_below_header_tool
 from word_document_server.tools.content_tools import replace_block_between_manual_anchors_tool
@@ -85,7 +86,7 @@ def setup_logging(debug_mode):
 
 
 # Initialize FastMCP server
-mcp = FastMCP("Word Document Server")
+mcp = FastMCP("WaDocx MCP")
 
 
 def register_tools():
@@ -161,6 +162,45 @@ def register_tools():
     def get_document_xml(filename: str):
         """Get the raw XML structure of a Word document."""
         return document_tools.get_document_xml_tool(filename)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Get Document Markdown",
+            readOnlyHint=True,
+        ),
+    )
+    def get_document_markdown(filename: str):
+        """Return a markdown view of the document for diffing and review."""
+        return markdown_tools.get_document_markdown(filename)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Export Document Markdown",
+        ),
+    )
+    def export_document_markdown(filename: str, output_filename: str = None):
+        """Export the document as markdown to a file."""
+        return markdown_tools.export_document_markdown_to_file(filename, output_filename)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Replace Document With Markdown",
+            destructiveHint=True,
+        ),
+    )
+    def replace_document_with_markdown(filename: str, markdown_text: str):
+        """Replace the document body with markdown-rendered content."""
+        return markdown_tools.replace_document_with_markdown(filename, markdown_text)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Replace Section With Markdown",
+            destructiveHint=True,
+        ),
+    )
+    def replace_section_with_markdown(filename: str, header_text: str, markdown_text: str):
+        """Replace the body below a heading using markdown-rendered content."""
+        return markdown_tools.replace_section_with_markdown(filename, header_text, markdown_text)
     
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -261,6 +301,169 @@ def register_tools():
     def add_page_break(filename: str):
         """Add a page break to the document."""
         return content_tools.add_page_break(filename)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Add Live Table Of Contents",
+        ),
+    )
+    def add_live_table_of_contents(
+        filename: str,
+        title: str = "Contents",
+        max_level: int = 3,
+        insert_at_start: bool = True,
+        add_page_break_after: bool = False,
+    ):
+        """Insert a native Word TOC field that can be refreshed in Word."""
+        return content_tools.add_live_table_of_contents(
+            filename, title, max_level, insert_at_start, add_page_break_after
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Set Document Header",
+        ),
+    )
+    def set_document_header(
+        filename: str,
+        text: str,
+        section_index: int = 0,
+        header_type: str = "default",
+        font_name: str = None,
+        font_size: int = None,
+        bold: bool = None,
+        italic: bool = None,
+        color: str = None,
+        alignment: str = None,
+    ):
+        """Create or replace page header text for a document section."""
+        return content_tools.set_document_header(
+            filename, text, section_index, header_type,
+            font_name, font_size, bold, italic, color, alignment
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Get Document Header",
+            readOnlyHint=True,
+        ),
+    )
+    def get_document_header(filename: str, section_index: int = 0, header_type: str = "default"):
+        """Read page header text for a document section."""
+        return content_tools.get_document_header(filename, section_index, header_type)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Set Document Header Page Number",
+        ),
+    )
+    def set_document_header_page_number(
+        filename: str,
+        prefix_text: str = "",
+        suffix_text: str = "",
+        section_index: int = 0,
+        header_type: str = "default",
+        alignment: str = "right",
+        font_name: str = None,
+        font_size: int = None,
+        bold: bool = None,
+        italic: bool = None,
+        color: str = None,
+    ):
+        """Create or replace a page header containing a live PAGE field."""
+        return content_tools.set_document_header_page_number(
+            filename, prefix_text, suffix_text, section_index, header_type,
+            alignment, font_name, font_size, bold, italic, color
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Set Document Footer",
+        ),
+    )
+    def set_document_footer(
+        filename: str,
+        text: str,
+        section_index: int = 0,
+        footer_type: str = "default",
+        font_name: str = None,
+        font_size: int = None,
+        bold: bool = None,
+        italic: bool = None,
+        color: str = None,
+        alignment: str = None,
+    ):
+        """Create or replace page footer text for a document section."""
+        return content_tools.set_document_footer(
+            filename, text, section_index, footer_type,
+            font_name, font_size, bold, italic, color, alignment
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Get Document Footer",
+            readOnlyHint=True,
+        ),
+    )
+    def get_document_footer(filename: str, section_index: int = 0, footer_type: str = "default"):
+        """Read page footer text for a document section."""
+        return content_tools.get_document_footer(filename, section_index, footer_type)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Set Document Footer Page Number",
+        ),
+    )
+    def set_document_footer_page_number(
+        filename: str,
+        prefix_text: str = "",
+        suffix_text: str = "",
+        section_index: int = 0,
+        footer_type: str = "default",
+        alignment: str = "right",
+        font_name: str = None,
+        font_size: int = None,
+        bold: bool = None,
+        italic: bool = None,
+        color: str = None,
+    ):
+        """Create or replace a page footer containing a live PAGE field."""
+        return content_tools.set_document_footer_page_number(
+            filename, prefix_text, suffix_text, section_index, footer_type,
+            alignment, font_name, font_size, bold, italic, color
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Insert OMML Equation",
+        ),
+    )
+    def insert_omml_equation(
+        filename: str,
+        equation_text: str,
+        paragraph_index: int = None,
+        position: str = "after",
+    ):
+        """Insert a native Word OMML equation paragraph."""
+        return content_tools.insert_omml_equation(filename, equation_text, paragraph_index, position)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Add Bookmark To Paragraph",
+        ),
+    )
+    def add_bookmark_to_paragraph(filename: str, paragraph_index: int, bookmark_name: str):
+        """Attach a native Word bookmark to a paragraph."""
+        return content_tools.add_bookmark_to_paragraph(filename, paragraph_index, bookmark_name)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Add Internal Hyperlink",
+        ),
+    )
+    def add_internal_hyperlink(filename: str, paragraph_index: int, link_text: str, bookmark_name: str):
+        """Append an internal hyperlink pointing to a bookmark."""
+        return content_tools.add_internal_hyperlink(filename, paragraph_index, link_text, bookmark_name)
     
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -694,7 +897,7 @@ def register_tools():
 
 
 def run_server():
-    """Run the Word Document MCP Server with configurable transport."""
+    """Run WaDocx MCP with configurable transport."""
     # Get transport configuration
     config = get_transport_config()
     
@@ -706,7 +909,7 @@ def run_server():
     
     # Print startup information
     transport_type = config['transport']
-    print(f"Starting Word Document MCP Server with {transport_type} transport...")
+    print(f"Starting WaDocx MCP with {transport_type} transport...")
     
     # if config['debug']:
     #     print(f"Configuration: {config}")

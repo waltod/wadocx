@@ -7,8 +7,8 @@ from word_document_server.tools.content_tools import add_paragraph, add_heading
 from word_document_server.tools.document_tools import create_document
 
 
-async def test_formatting():
-    """Test the new formatting parameters."""
+async def _run_formatting_demo():
+    """Exercise the formatting helpers end to end."""
     test_doc = 'test_formatting.docx'
 
     # Create test document
@@ -104,5 +104,9 @@ async def test_formatting():
     print(f"Open {test_doc} in Word to verify the formatting visually.")
 
 
+def test_formatting():
+    asyncio.run(_run_formatting_demo())
+
+
 if __name__ == "__main__":
-    asyncio.run(test_formatting())
+    asyncio.run(_run_formatting_demo())

@@ -19,4 +19,4 @@ COPY . /app
 RUN pip install --no-cache-dir .
 
 # Default command
-ENTRYPOINT ["word_mcp_server"]
+ENTRYPOINT ["wadocx_mcp"]

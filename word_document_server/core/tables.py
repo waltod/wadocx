@@ -1,5 +1,5 @@
 """
-Table-related operations for Word Document Server.
+Table-related operations for WaDocx MCP.
 """
 from docx.oxml.shared import OxmlElement, qn
 from docx.oxml.ns import nsdecls
@@ -864,3 +864,4 @@ def set_cell_padding_by_position(table, row_index, col_index, top=None, bottom=N
     except Exception as e:
         print(f"Error setting cell padding by position: {e}")
         return False
+

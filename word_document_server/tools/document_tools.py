@@ -1,5 +1,5 @@
 """
-Document creation and manipulation tools for Word Document Server.
+Document creation and manipulation tools for WaDocx MCP.
 """
 import os
 import json
@@ -212,3 +212,4 @@ async def merge_documents(target_filename: str, source_filenames: List[str], add
 async def get_document_xml_tool(filename: str) -> str:
     """Get the raw XML structure of a Word document."""
     return get_document_xml(filename)
+

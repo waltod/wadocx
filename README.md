@@ -1,18 +1,12 @@
-# Office-Word-MCP-Server
+# WaDocx
 
-[![smithery badge](https://smithery.ai/badge/@GongRzhe/Office-Word-MCP-Server)](https://smithery.ai/server/@GongRzhe/Office-Word-MCP-Server)
+A Model Context Protocol (MCP) server for creating, reading, and manipulating Microsoft Word documents. WaDocx is tuned for heavy drafting and revision loops, with markdown round-tripping, stable block replacement, native headers and footers, live TOC and PAGE fields, and OMML equation support.
 
-A Model Context Protocol (MCP) server for creating, reading, and manipulating Microsoft Word documents. This server enables AI assistants to work with Word documents through a standardized interface, providing rich document editing capabilities.
-
-<a href="https://glama.ai/mcp/servers/@GongRzhe/Office-Word-MCP-Server">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/@GongRzhe/Office-Word-MCP-Server/badge" alt="Office Word Server MCP server" />
-</a>
-
-![](https://badge.mcpx.dev?type=server "MCP Server")
+Repository: [https://github.com/waltod/wadocx](https://github.com/waltod/wadocx)
 
 ## Overview
 
-Office-Word-MCP-Server implements the [Model Context Protocol](https://modelcontextprotocol.io/) to expose Word document operations as tools and resources. It serves as a bridge between AI assistants and Microsoft Word documents, allowing for document creation, content addition, formatting, and analysis.
+WaDocx implements the [Model Context Protocol](https://modelcontextprotocol.io/) to expose Word document operations as tools and resources. It serves as a bridge between AI assistants and Microsoft Word documents, allowing for document creation, content addition, formatting, and analysis.
 
 The server features a modular architecture that separates concerns into core functionality, tools, and utilities, making it highly maintainable and extensible for future enhancements.
 
@@ -32,16 +26,21 @@ The server features a modular architecture that separates concerns into core fun
 
 - Create new Word documents with metadata
 - Extract text and analyze document structure
+- Export documents to markdown for diffing and review
 - View document properties and statistics
 - List available documents in a directory
 - Create copies of existing documents
 - Merge multiple documents into a single document
 - Convert Word documents to PDF format
+- Read and replace page headers and footers by section
+- Insert live Word TOC and PAGE fields
 
 ### Content Creation
 
 - Add headings with different levels and direct formatting (font, size, bold, italic, borders)
 - Insert paragraphs with optional styling and direct formatting (font, size, bold, italic, color)
+- Create or replace page headers and footers with font, size, color, and alignment control
+- Insert native Word equations (OMML), bookmarks, and internal hyperlinks
 - Create tables with custom data
 - Add images with proportional scaling
 - Insert page breaks
@@ -91,6 +90,8 @@ The server features a modular architecture that separates concerns into core fun
 - Insert content relative to specific text or paragraph indices
 - Insert bulleted and numbered lists with proper XML numbering structure
 - Insert headers and paragraphs before or after target locations
+- Replace whole documents or individual sections from markdown
+- Use stable body-element replacement for repeated section and anchor edits
 - Create custom document styles
 - Apply consistent formatting throughout documents
 - Format specific ranges of text with detailed control
@@ -113,14 +114,6 @@ The server features a modular architecture that separates concerns into core fun
 
 ## Installation
 
-### Installing via Smithery
-
-To install Office Word Document Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@GongRzhe/Office-Word-MCP-Server):
-
-```bash
-npx -y @smithery/cli install @GongRzhe/Office-Word-MCP-Server --client claude
-```
-
 ### Prerequisites
 
 - Python 3.8 or higher
@@ -130,11 +123,11 @@ npx -y @smithery/cli install @GongRzhe/Office-Word-MCP-Server --client claude
 
 ```bash
 # Clone the repository
-git clone https://github.com/GongRzhe/Office-Word-MCP-Server.git
-cd Office-Word-MCP-Server
+git clone https://github.com/waltod/wadocx.git
+cd wadocx
 
 # Install dependencies
-pip install -r requirements.txt
+py -m pip install -r requirements.txt
 ```
 
 ### Using the Setup Script
@@ -147,23 +140,23 @@ Alternatively, you can use the provided setup script which handles:
 - Generating MCP configuration
 
 ```bash
-python setup_mcp.py
+py setup_mcp.py
 ```
 
-## Usage with Claude for Desktop
+## Usage with Claude Desktop or Codex
 
 ### Configuration
 
 #### Method 1: After Local Installation
 
-1. After installation, add the server to your Claude for Desktop configuration file:
+1. After installation, add the server to your client configuration file:
 
 ```json
 {
   "mcpServers": {
-    "word-document-server": {
-      "command": "python",
-      "args": ["/path/to/word_mcp_server.py"]
+    "wadocx-mcp": {
+      "command": "py",
+      "args": ["/path/to/wadocx_mcp.py"]
     }
   }
 }
@@ -171,14 +164,14 @@ python setup_mcp.py
 
 #### Method 2: Without Installation (Using uvx)
 
-1. You can also configure Claude for Desktop to use the server without local installation by using the uvx package manager:
+1. You can also configure the client to use the server without local installation by using the `uvx` package manager:
 
 ```json
 {
   "mcpServers": {
-    "word-document-server": {
+    "wadocx-mcp": {
       "command": "uvx",
-      "args": ["--from", "office-word-mcp-server", "word_mcp_server"]
+      "args": ["--from", "wadocx", "wadocx_mcp"]
     }
   }
 }
@@ -189,7 +182,7 @@ python setup_mcp.py
    - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
    - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-3. Restart Claude for Desktop to load the configuration.
+3. Restart the client to load the configuration.
 
 ### Example Operations
 
@@ -227,9 +220,23 @@ create_document(filename, title=None, author=None)
 get_document_info(filename)
 get_document_text(filename)
 get_document_outline(filename)
+get_document_markdown(filename)
+get_document_header(filename, section_index=0, header_type="default")
+get_document_footer(filename, section_index=0, footer_type="default")
 list_available_documents(directory=".")
 copy_document(source_filename, destination_filename=None)
 convert_to_pdf(filename, output_filename=None)
+export_document_markdown(filename, output_filename=None)
+replace_document_with_markdown(filename, markdown_text)
+replace_section_with_markdown(filename, header_text, markdown_text)
+set_document_header(filename, text, section_index=0, header_type="default", font_name=None, font_size=None, bold=None, italic=None, color=None, alignment=None)
+set_document_footer(filename, text, section_index=0, footer_type="default", font_name=None, font_size=None, bold=None, italic=None, color=None, alignment=None)
+add_live_table_of_contents(filename, title="Contents", max_level=3, insert_at_start=True, add_page_break_after=False)
+set_document_header_page_number(filename, prefix_text="", suffix_text="", section_index=0, header_type="default", alignment="right", font_name=None, font_size=None, bold=None, italic=None, color=None)
+set_document_footer_page_number(filename, prefix_text="", suffix_text="", section_index=0, footer_type="default", alignment="right", font_name=None, font_size=None, bold=None, italic=None, color=None)
+insert_omml_equation(filename, equation_text, paragraph_index=None, position="after")
+add_bookmark_to_paragraph(filename, paragraph_index, bookmark_name)
+add_internal_hyperlink(filename, paragraph_index, link_text, bookmark_name)
 ```
 
 ### Content Addition
@@ -263,6 +270,10 @@ insert_numbered_list_near_text(filename, target_text=None, list_items=None,
 # bullet_type options:
 #   'bullet' - Creates bulleted list with bullets (•)
 #   'number' - Creates numbered list (1, 2, 3, ...)
+
+# Replace or revise content using markdown as the drafting surface
+replace_document_with_markdown(filename, markdown_text)
+replace_section_with_markdown(filename, header_text, markdown_text)
 ```
 
 ### Content Extraction

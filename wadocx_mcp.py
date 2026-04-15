@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Compatibility run script for WaDocx MCP.
+Run script for WaDocx MCP.
 
-This wrapper keeps the legacy executable name working.
+This script provides a simple way to start the WaDocx MCP server.
 """
 
 from word_document_server.main import run_server

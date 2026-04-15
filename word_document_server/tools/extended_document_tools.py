@@ -1,5 +1,5 @@
 """
-Extended document tools for Word Document Server.
+Extended document tools for WaDocx MCP.
 
 These tools provide enhanced document content extraction and search capabilities.
 """
@@ -182,3 +182,4 @@ async def convert_to_pdf(filename: str, output_filename: Optional[str] = None) -
             
     except Exception as e:
         return f"Failed to convert document to PDF: {str(e)}"
+

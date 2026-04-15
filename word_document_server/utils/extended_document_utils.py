@@ -1,5 +1,5 @@
 """
-Extended document utilities for Word Document Server.
+Extended document utilities for WaDocx MCP.
 """
 from typing import Dict, List, Any, Tuple
 from docx import Document
@@ -163,3 +163,4 @@ def find_text(doc_path: str, text_to_find: str, match_case: bool = True, whole_w
         return results
     except Exception as e:
         return {"error": f"Failed to search for text: {str(e)}"}
+

@@ -1,15 +1,17 @@
 """
-Formatting tools for Word Document Server.
+Formatting tools for WaDocx MCP.
 
 These tools handle formatting operations for Word documents,
 including text formatting, table formatting, and custom styles.
 """
 import os
+from copy import deepcopy
 from typing import List, Optional, Dict, Any
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_COLOR_INDEX
 from docx.enum.style import WD_STYLE_TYPE
+from docx.oxml.ns import qn
 
 from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension
 from word_document_server.core.styles import create_style
@@ -1110,3 +1112,131 @@ async def set_table_cell_padding(filename: str, table_index: int, row_index: int
             return f"Failed to set cell padding. Check that indices are valid."
     except Exception as e:
         return f"Failed to set cell padding: {str(e)}"
+
+
+def _resolve_text_color(color: Optional[str]) -> Optional[RGBColor]:
+    """Resolve a named or hex color into RGBColor."""
+    if not color:
+        return None
+
+    color_map = {
+        "red": RGBColor(255, 0, 0),
+        "blue": RGBColor(0, 0, 255),
+        "green": RGBColor(0, 128, 0),
+        "yellow": RGBColor(255, 255, 0),
+        "black": RGBColor(0, 0, 0),
+        "gray": RGBColor(128, 128, 128),
+        "white": RGBColor(255, 255, 255),
+        "purple": RGBColor(128, 0, 128),
+        "orange": RGBColor(255, 165, 0),
+    }
+
+    try:
+        return color_map.get(color.lower(), RGBColor.from_string(color))
+    except Exception:
+        return RGBColor(0, 0, 0)
+
+
+def _copy_run_properties(source_run, target_run) -> None:
+    """Copy run properties from one run to another."""
+    if source_run is None:
+        return
+    source_rpr = source_run._element.find(qn("w:rPr"))
+    if source_rpr is None:
+        return
+
+    target_rpr = target_run._element.get_or_add_rPr()
+    for child in list(target_rpr):
+        target_rpr.remove(child)
+    for child in source_rpr:
+        target_rpr.append(deepcopy(child))
+
+
+def _rebuild_paragraph_runs(paragraph, segments: List[Dict[str, Any]], template_run=None) -> None:
+    """Replace paragraph runs from plain-text segments."""
+    paragraph_element = paragraph._element
+    for child in list(paragraph_element):
+        if child.tag.endswith("}r") or child.tag.endswith("}hyperlink"):
+            paragraph_element.remove(child)
+
+    for segment in segments:
+        text = segment.get("text", "")
+        if not text:
+            continue
+
+        run = paragraph.add_run(text)
+        _copy_run_properties(template_run, run)
+
+        formatting = segment.get("format") or {}
+        if formatting.get("bold") is not None:
+            run.bold = formatting["bold"]
+        if formatting.get("italic") is not None:
+            run.italic = formatting["italic"]
+        if formatting.get("underline") is not None:
+            run.underline = formatting["underline"]
+        if formatting.get("font_size") is not None:
+            run.font.size = Pt(formatting["font_size"])
+        if formatting.get("font_name"):
+            run.font.name = formatting["font_name"]
+        if formatting.get("color"):
+            run.font.color.rgb = _resolve_text_color(formatting["color"])
+
+
+async def format_text(filename: str, paragraph_index: int, start_pos: int, end_pos: int,
+                     bold: Optional[bool] = None, italic: Optional[bool] = None,
+                     underline: Optional[bool] = None, color: Optional[str] = None,
+                     font_size: Optional[int] = None, font_name: Optional[str] = None) -> str:
+    """Format a specific range of text within a paragraph."""
+    filename = ensure_docx_extension(filename)
+
+    try:
+        paragraph_index = int(paragraph_index)
+        start_pos = int(start_pos)
+        end_pos = int(end_pos)
+        if font_size is not None:
+            font_size = int(font_size)
+    except (ValueError, TypeError):
+        return "Invalid parameter: paragraph_index, start_pos, end_pos, and font_size must be integers"
+
+    if not os.path.exists(filename):
+        return f"Document {filename} does not exist"
+
+    is_writeable, error_message = check_file_writeable(filename)
+    if not is_writeable:
+        return f"Cannot modify document: {error_message}. Consider creating a copy first."
+
+    try:
+        doc = Document(filename)
+
+        if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+            return f"Invalid paragraph index. Document has {len(doc.paragraphs)} paragraphs (0-{len(doc.paragraphs)-1})."
+
+        paragraph = doc.paragraphs[paragraph_index]
+        text = paragraph.text
+        if start_pos < 0 or end_pos > len(text) or start_pos >= end_pos:
+            return f"Invalid text positions. Paragraph has {len(text)} characters."
+
+        target_text = text[start_pos:end_pos]
+        template_run = next((run for run in paragraph.runs if run.text), paragraph.runs[0] if paragraph.runs else None)
+        segments = [
+            {"text": text[:start_pos]},
+            {
+                "text": target_text,
+                "format": {
+                    "bold": bold,
+                    "italic": italic,
+                    "underline": underline,
+                    "color": color,
+                    "font_size": font_size,
+                    "font_name": font_name,
+                },
+            },
+            {"text": text[end_pos:]},
+        ]
+
+        _rebuild_paragraph_runs(paragraph, segments, template_run=template_run)
+        doc.save(filename)
+        return f"Text '{target_text}' formatted successfully in paragraph {paragraph_index}."
+    except Exception as e:
+        return f"Failed to format text: {str(e)}"
+

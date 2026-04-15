@@ -1,5 +1,5 @@
 """
-Protection tools for Word Document Server.
+Protection tools for WaDocx MCP.
 
 These tools handle document protection features such as
 password protection, restricted editing, and digital signatures.
@@ -273,3 +273,4 @@ async def unprotect_document(filename: str, password: str) -> str:
                  return f"Failed to decrypt document {filename}: {str(e)}. Could not restore encrypted file."
         except Exception as restore_e:
              return f"Failed to decrypt document {filename}: {str(e)}. Also failed to restore encrypted file: {str(restore_e)}"
+

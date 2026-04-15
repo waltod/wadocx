@@ -1,5 +1,5 @@
 """
-Document protection functionality for Word Document Server.
+Document protection functionality for WaDocx MCP.
 """
 import os
 import json
@@ -240,3 +240,4 @@ def verify_signature(doc_path: str) -> Tuple[bool, str]:
     
     except Exception as e:
         return False, f"Error verifying signature: {str(e)}"
+

@@ -1,5 +1,5 @@
 """
-Footnote and endnote tools for Word Document Server.
+Footnote and endnote tools for WaDocx MCP.
 
 These tools handle footnote and endnote functionality,
 including adding, customizing, and converting between them.
@@ -707,3 +707,4 @@ async def delete_footnote_from_document_robust(
         search_text=search_text
     )
     return result["message"]
+
