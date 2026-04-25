@@ -34,6 +34,7 @@ only-include = [
     "word_document_server",
     "office_word_mcp_server",
     "wadocx",
+    "scripts",
 ]
 sources = ["."]
 

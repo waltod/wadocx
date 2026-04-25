@@ -52,3 +52,8 @@ from word_document_server.tools.markdown_tools import (
     replace_document_with_markdown, replace_section_with_markdown
 )
 
+# ISO template tools
+from word_document_server.tools.iso_template_tools import (
+    compile_iso_template_draft
+)
+

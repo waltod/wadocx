@@ -44,6 +44,11 @@ async def replace_document_with_markdown(filename: str, markdown_text: str) -> s
         return f"Cannot modify document: {error_message}. Consider creating a copy first."
 
     result = replace_document_with_markdown_impl(filename, markdown_text)
+    if result.get("restored_exact_docx"):
+        return (
+            f"Document {filename} restored exactly from a wadocx fidelity bundle "
+            f"(sha256={result['sha256']})."
+        )
     return (
         f"Document {filename} replaced from markdown with "
         f"{result['inserted_blocks']} body element(s) across {result['block_count']} parsed block(s)."

@@ -34,6 +34,7 @@ The server features a modular architecture that separates concerns into core fun
 - Convert Word documents to PDF format
 - Read and replace page headers and footers by section
 - Insert live Word TOC and PAGE fields
+- Compile markdown drafts into an ISO-style Word template while preserving template front matter, sections, headers, footers, and body styles
 
 ### Content Creation
 
@@ -229,6 +230,7 @@ convert_to_pdf(filename, output_filename=None)
 export_document_markdown(filename, output_filename=None)
 replace_document_with_markdown(filename, markdown_text)
 replace_section_with_markdown(filename, header_text, markdown_text)
+compile_iso_template_draft(markdown_path, template_docx_path, output_docx_path)
 set_document_header(filename, text, section_index=0, header_type="default", font_name=None, font_size=None, bold=None, italic=None, color=None, alignment=None)
 set_document_footer(filename, text, section_index=0, footer_type="default", font_name=None, font_size=None, bold=None, italic=None, color=None, alignment=None)
 add_live_table_of_contents(filename, title="Contents", max_level=3, insert_at_start=True, add_page_break_after=False)
@@ -274,6 +276,7 @@ insert_numbered_list_near_text(filename, target_text=None, list_items=None,
 # Replace or revise content using markdown as the drafting surface
 replace_document_with_markdown(filename, markdown_text)
 replace_section_with_markdown(filename, header_text, markdown_text)
+compile_iso_template_draft(markdown_path, template_docx_path, output_docx_path)
 ```
 
 ### Content Extraction

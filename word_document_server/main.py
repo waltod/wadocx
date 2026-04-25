@@ -23,7 +23,8 @@ from word_document_server.tools import (
     footnote_tools,
     extended_document_tools,
     comment_tools,
-    markdown_tools
+    markdown_tools,
+    iso_template_tools
 )
 from word_document_server.tools.content_tools import replace_paragraph_block_below_header_tool
 from word_document_server.tools.content_tools import replace_block_between_manual_anchors_tool
@@ -201,6 +202,16 @@ def register_tools():
     def replace_section_with_markdown(filename: str, header_text: str, markdown_text: str):
         """Replace the body below a heading using markdown-rendered content."""
         return markdown_tools.replace_section_with_markdown(filename, header_text, markdown_text)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Compile ISO Template Draft",
+            destructiveHint=True,
+        ),
+    )
+    def compile_iso_template_draft(markdown_path: str, template_docx_path: str, output_docx_path: str):
+        """Compile a markdown draft into an ISO-style Word template document."""
+        return iso_template_tools.compile_iso_template_draft(markdown_path, template_docx_path, output_docx_path)
     
     @mcp.tool(
         annotations=ToolAnnotations(

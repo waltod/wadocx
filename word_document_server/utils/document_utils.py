@@ -2,13 +2,31 @@
 Document utility functions for WaDocx MCP.
 """
 import json
+import os
 from typing import Dict, List, Any, Optional
 from docx import Document
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from docx.shared import Inches
 from docx.text.paragraph import Paragraph
+
+
+def apply_block_alignment(paragraph, alignment: Optional[str]) -> None:
+    """Apply a simple alignment keyword to a paragraph."""
+    if not alignment:
+        return
+
+    alignment_map = {
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+        "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+    }
+    paragraph.alignment = alignment_map.get(alignment.lower())
 
 
 def get_document_properties(doc_path: str) -> Dict[str, Any]:
@@ -526,7 +544,7 @@ def insert_content_blocks_after_element(
     """
     Insert parsed content blocks after an anchor element.
 
-    Supported block types: paragraph, heading, list, table.
+    Supported block types: paragraph, heading, list, table, image.
     Returns the number of body elements inserted.
     """
     current_element = anchor_element
@@ -538,6 +556,7 @@ def insert_content_blocks_after_element(
         if block_type == "heading":
             level = max(1, min(int(block.get("level", 1)), 9))
             new_para = doc.add_heading(block.get("text", ""), level=level)
+            apply_block_alignment(new_para, block.get("alignment"))
             current_element.addnext(new_para._element)
             current_element = new_para._element
             inserted += 1
@@ -554,6 +573,7 @@ def insert_content_blocks_after_element(
                 except KeyError:
                     pass
                 add_bullet_numbering(new_para, num_id=num_id, level=0)
+                apply_block_alignment(new_para, block.get("alignment"))
                 current_element.addnext(new_para._element)
                 current_element = new_para._element
                 inserted += 1
@@ -568,8 +588,38 @@ def insert_content_blocks_after_element(
             for row_idx, row in enumerate(rows):
                 for col_idx, value in enumerate(row):
                     table.cell(row_idx, col_idx).text = value
+            if block.get("alignment") == "center":
+                table.alignment = WD_TABLE_ALIGNMENT.CENTER
             current_element.addnext(table._element)
             current_element = table._element
+            inserted += 1
+            continue
+
+        if block_type == "image":
+            image_path = block.get("path", "")
+            if not image_path:
+                continue
+            if not os.path.exists(image_path):
+                raise FileNotFoundError(f"Markdown image file not found: {image_path}")
+
+            new_para = doc.add_paragraph()
+            image_run = new_para.add_run()
+            width = block.get("width")
+            if width is not None:
+                inline_shape = image_run.add_picture(image_path, width=Inches(width))
+            else:
+                inline_shape = image_run.add_picture(image_path)
+
+            alt_text = block.get("alt", "").strip()
+            if alt_text:
+                doc_pr = inline_shape._inline.docPr
+                doc_pr.set("name", alt_text[:255])
+                doc_pr.set("descr", alt_text[:255])
+                doc_pr.set("title", alt_text[:255])
+            apply_block_alignment(new_para, block.get("alignment"))
+
+            current_element.addnext(new_para._element)
+            current_element = new_para._element
             inserted += 1
             continue
 
@@ -579,6 +629,7 @@ def insert_content_blocks_after_element(
             block.get("text", ""),
             block.get("style", default_paragraph_style)
         )
+        apply_block_alignment(get_paragraph_from_element(doc, current_element), block.get("alignment"))
         inserted += 1
 
     return inserted
