@@ -120,7 +120,7 @@ The server features a modular architecture that separates concerns into core fun
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.11 or higher
 - pip package manager
 
 ### Basic Installation
@@ -150,6 +150,28 @@ py setup_mcp.py
 ## Usage with Claude Desktop or Codex
 
 ### Configuration
+
+#### Codex Desktop
+
+Codex users can run WaDocx as a local stdio MCP server. On Windows, clone and install it like this:
+
+```powershell
+git clone https://github.com/waltod/wadocx.git C:\Users\USER\.codex\vendor_imports\wadocx
+cd C:\Users\USER\.codex\vendor_imports\wadocx
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+```
+
+Then add this to `C:\Users\USER\.codex\config.toml`, adjusting the path if the repository was cloned somewhere else:
+
+```toml
+[mcp_servers.wadocx-mcp]
+command = 'C:\Users\USER\.codex\vendor_imports\wadocx\.venv\Scripts\python.exe'
+args = ['C:\Users\USER\.codex\vendor_imports\wadocx\wadocx_mcp.py']
+env = { PYTHONPATH = 'C:\Users\USER\.codex\vendor_imports\wadocx', MCP_TRANSPORT = 'stdio' }
+```
+
+Restart Codex after changing `config.toml` so it reloads the MCP server and tool list.
 
 #### Method 1: After Local Installation
 
