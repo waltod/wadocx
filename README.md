@@ -12,7 +12,7 @@ The server features a modular architecture that separates concerns into core fun
 
 ### Example
 
-#### Pormpt
+#### Prompt
 
 ![image](https://github.com/user-attachments/assets/f49b0bcc-88b2-4509-bf50-995b9a40038c)
 
@@ -27,6 +27,8 @@ The server features a modular architecture that separates concerns into core fun
 - Create new Word documents with metadata
 - Extract text and analyze document structure
 - Export documents to markdown for diffing and review
+- Preserve exact DOCX bytes in exported markdown with a `wadocx:fidelity-bundle` for lossless restore
+- Rebuild documents from markdown while inheriting section breaks, headers, footers, and styles from a markdown-exported base template
 - View document properties and statistics
 - List available documents in a directory
 - Create copies of existing documents
@@ -92,6 +94,7 @@ The server features a modular architecture that separates concerns into core fun
 - Insert bulleted and numbered lists with proper XML numbering structure
 - Insert headers and paragraphs before or after target locations
 - Replace whole documents or individual sections from markdown
+- Round-trip markdown image references into Word pictures and export embedded pictures back to local image files
 - Use stable body-element replacement for repeated section and anchor edits
 - Create custom document styles
 - Apply consistent formatting throughout documents
@@ -128,7 +131,7 @@ git clone https://github.com/waltod/wadocx.git
 cd wadocx
 
 # Install dependencies
-py -m pip install -r requirements.txt
+py -m pip install -e .
 ```
 
 ### Using the Setup Script
@@ -210,6 +213,54 @@ Once configured, you can ask Claude to perform operations like:
 - "Create a callout table with a blue checkmark icon and white text"
 - "Set the first column width to 50 points and auto-fit the remaining columns"
 - "Apply alternating row colors to make the table more readable"
+- "Export this DOCX as markdown, edit the markdown, then restore the exact original formatting"
+- "Use this ISO template DOCX and markdown draft to create a formatted standard document"
+
+## Markdown Round Trip
+
+WaDocx supports markdown as the safer drafting surface for heavy revision loops. The markdown tools are designed for two different workflows:
+
+- **Editable markdown rebuild**: headings, paragraphs, lists, tables, images, page breaks, and simple alignment blocks are parsed from markdown and rendered back into Word.
+- **Exact DOCX restore**: exported markdown includes a `wadocx:fidelity-bundle` comment containing the source DOCX bytes and SHA-256 hash. Passing that exported markdown to `replace_document_with_markdown` restores the original DOCX exactly.
+
+Use exact restore when the goal is archival fidelity or a no-loss round trip. Use editable rebuild when the goal is clause-by-clause drafting and review.
+
+### Supported Markdown Controls
+
+```markdown
+<!-- wadocx:base-template-md
+path: C:\path\to\iso_format_new.md
+-->
+
+# Cover Title
+
+<div align="center">
+Centered paragraph
+</div>
+
+![Figure caption](<C:\path\to\image.png>)
+
+<!-- PAGE BREAK -->
+
+## Clause Title
+```
+
+- `wadocx:base-template-md` loads a markdown-exported template. If that template markdown contains a fidelity bundle, WaDocx restores the original template first and then replaces the body from markdown.
+- `<!-- PAGE BREAK -->` starts a new Word section where possible and preserves section-level header/footer state from the template.
+- `<div align="left|center|right|justify">` applies paragraph alignment to the rendered block.
+- Markdown image paths can be absolute paths or paths relative to the markdown file being compiled.
+
+### ISO Template Compiler
+
+For ISO-style standards documents with fixed front matter, use:
+
+```python
+compile_iso_template_draft(markdown_path, template_docx_path, output_docx_path)
+```
+
+This compiler preserves the Word template structure, including cover/front-matter layout, section breaks, headers, footers, and body styles, while replacing the draft content from markdown.
+
+Current limitation: Word TOC fields can be inserted and preserved, but headless LibreOffice rendering may not refresh TOC page numbers. Open the generated DOCX in Word and update fields when final page numbers matter.
 
 
 ## API Reference
