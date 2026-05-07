@@ -213,8 +213,12 @@ def register_tools():
         <!-- wadocx:toc
         title: Contents
         max_level: 3
+        style: dotted
         page_break_after: true
         -->
+        TOC styles: dotted (default dotted leaders with page numbers),
+        page_numbers/plain (page numbers without dotted leaders), links/web
+        (hyperlinked entries without page numbers).
 
         If markdown_text begins with a wadocx:fidelity-bundle exported by
         get_document_markdown/export_document_markdown, this restores the exact
@@ -361,10 +365,17 @@ def register_tools():
         max_level: int = 3,
         insert_at_start: bool = True,
         add_page_break_after: bool = False,
+        toc_style: str = "dotted",
     ):
-        """Insert a native Word TOC field that can be refreshed in Word."""
+        """Insert a native Word TOC field that can be refreshed in Word.
+
+        toc_style supports:
+        - dotted: dotted leaders with page numbers (Word default)
+        - page_numbers/plain: page numbers without dotted leaders
+        - links/web: hyperlinked entries without page numbers
+        """
         return content_tools.add_live_table_of_contents(
-            filename, title, max_level, insert_at_start, add_page_break_after
+            filename, title, max_level, insert_at_start, add_page_break_after, toc_style
         )
 
     @mcp.tool(

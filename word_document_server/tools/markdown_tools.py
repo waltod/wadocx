@@ -58,8 +58,10 @@ async def replace_document_with_markdown(filename: str, markdown_text: str) -> s
       <!-- wadocx:toc
       title: Contents
       max_level: 3
+      style: dotted
       page_break_after: true
       -->
+      Supported styles are dotted, page_numbers/plain, and links/web.
 
     If markdown_text begins with a wadocx:fidelity-bundle exported by wadocx,
     the original DOCX bytes are restored exactly instead of rebuilding content.

@@ -13,7 +13,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension
-from word_document_server.utils.document_utils import find_and_replace_text, insert_header_near_text, insert_numbered_list_near_text, insert_line_or_paragraph_near_text, replace_paragraph_block_below_header, replace_block_between_manual_anchors
+from word_document_server.utils.document_utils import find_and_replace_text, insert_header_near_text, insert_numbered_list_near_text, insert_line_or_paragraph_near_text, replace_paragraph_block_below_header, replace_block_between_manual_anchors, build_toc_instruction
 from word_document_server.core.styles import ensure_heading_style, ensure_table_style
 
 
@@ -670,6 +670,7 @@ async def add_live_table_of_contents(
     max_level: int = 3,
     insert_at_start: bool = True,
     add_page_break_after: bool = False,
+    toc_style: str = "dotted",
 ) -> str:
     """Insert a native Word TOC field that can be refreshed in Word."""
     filename = ensure_docx_extension(filename)
@@ -699,7 +700,7 @@ async def add_live_table_of_contents(
                     toc_title_para.runs[0].bold = True
 
         toc_para = doc.add_paragraph()
-        instruction = f'TOC \\o "1-{max_level}" \\h \\z \\u'
+        instruction = build_toc_instruction(max_level=max_level, toc_style=toc_style)
         _append_field_code_run(
             toc_para,
             instruction,
@@ -719,7 +720,7 @@ async def add_live_table_of_contents(
                 _insert_paragraph_before(para, first_element)
 
         doc.save(filename)
-        return f"Live table of contents inserted into {filename}."
+        return f"Live table of contents inserted into {filename} ({toc_style})."
     except Exception as e:
         return f"Failed to insert live table of contents: {str(e)}"
 

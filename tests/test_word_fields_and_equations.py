@@ -90,6 +90,30 @@ page_break_after: true
     assert "<w:updateFields" in settings_xml
 
 
+def test_markdown_toc_directive_supports_google_docs_like_styles(tmp_path: Path):
+    styles = {
+        "dotted": 'TOC \\o "1-3" \\h \\z \\u',
+        "page_numbers": 'TOC \\o "1-3" \\h \\z \\u \\p " "',
+        "links": 'TOC \\o "1-3" \\h \\z \\u \\n "1-3"',
+    }
+
+    for style, expected_instruction in styles.items():
+        doc_path = tmp_path / f"markdown-toc-{style}.docx"
+        markdown = f"""<!-- wadocx:toc
+title: Contents
+max_level: 3
+style: {style}
+-->
+
+# Scope
+"""
+
+        replace_document_with_markdown(str(doc_path), markdown)
+
+        document_xml = _read_zip_part(doc_path, "word/document.xml")
+        assert expected_instruction in document_xml
+
+
 def test_header_and_footer_page_fields_are_written_as_native_fields(tmp_path: Path):
     doc_path = tmp_path / "page-fields.docx"
     asyncio.run(create_document(str(doc_path), title="Page Field Test"))

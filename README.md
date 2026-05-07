@@ -265,6 +265,7 @@ Centered paragraph
 <!-- wadocx:toc
 title: Contents
 max_level: 3
+style: dotted
 page_break_after: true
 -->
 
@@ -277,7 +278,8 @@ page_break_after: true
 
 - `wadocx:base-template-md` loads a markdown-exported template. If that template markdown contains a fidelity bundle, WaDocx restores the original template first and then replaces the body from markdown.
 - `<!-- TOC -->` inserts a native Word table-of-contents field at that point in the Markdown-rendered document.
-- `wadocx:toc` supports `title`, `max_level`/`level`, and `page_break_after`/`add_page_break_after` options for the native Word TOC field.
+- `wadocx:toc` supports `title`, `max_level`/`level`, `style`/`toc_style`, and `page_break_after`/`add_page_break_after` options for the native Word TOC field.
+- TOC styles are `dotted` (default dotted leaders with page numbers), `page_numbers`/`plain` (page numbers without dotted leaders), and `links`/`web` (hyperlinked entries without page numbers).
 - `<!-- PAGE BREAK -->` starts a new Word section where possible and preserves section-level header/footer state from the template.
 - `<div align="left|center|right|justify">` applies paragraph alignment to the rendered block.
 - Markdown image paths can be absolute paths or paths relative to the markdown file being compiled.
@@ -316,7 +318,7 @@ replace_section_with_markdown(filename, header_text, markdown_text)
 compile_iso_template_draft(markdown_path, template_docx_path, output_docx_path)
 set_document_header(filename, text, section_index=0, header_type="default", font_name=None, font_size=None, bold=None, italic=None, color=None, alignment=None)
 set_document_footer(filename, text, section_index=0, footer_type="default", font_name=None, font_size=None, bold=None, italic=None, color=None, alignment=None)
-add_live_table_of_contents(filename, title="Contents", max_level=3, insert_at_start=True, add_page_break_after=False)
+add_live_table_of_contents(filename, title="Contents", max_level=3, insert_at_start=True, add_page_break_after=False, toc_style="dotted")
 set_document_header_page_number(filename, prefix_text="", suffix_text="", section_index=0, header_type="default", alignment="right", font_name=None, font_size=None, bold=None, italic=None, color=None)
 set_document_footer_page_number(filename, prefix_text="", suffix_text="", section_index=0, footer_type="default", alignment="right", font_name=None, font_size=None, bold=None, italic=None, color=None)
 insert_omml_equation(filename, equation_text, paragraph_index=None, position="after")

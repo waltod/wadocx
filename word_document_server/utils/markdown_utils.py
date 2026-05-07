@@ -97,6 +97,7 @@ def _parse_toc_directive(comment_text: str) -> Optional[Dict[str, Any]]:
         "title": "Contents",
         "max_level": 3,
         "add_page_break_after": False,
+        "toc_style": "dotted",
     }
     if not body:
         return block
@@ -131,6 +132,10 @@ def _parse_toc_directive(comment_text: str) -> Optional[Dict[str, Any]]:
         block["add_page_break_after"] = _parse_bool(metadata["add_page_break_after"])
     if "page_break_after" in metadata:
         block["add_page_break_after"] = _parse_bool(metadata["page_break_after"])
+    if "style" in metadata:
+        block["toc_style"] = metadata["style"]
+    if "toc_style" in metadata:
+        block["toc_style"] = metadata["toc_style"]
     return block
 
 
