@@ -12,6 +12,7 @@ from word_document_server.tools.content_tools import (
 )
 from word_document_server.tools.content_tools import add_heading, add_paragraph
 from word_document_server.tools.document_tools import create_document
+from word_document_server.utils.markdown_utils import replace_document_with_markdown
 
 
 def _read_zip_part(doc_path: Path, part_name: str) -> str:
@@ -39,6 +40,53 @@ def test_add_live_table_of_contents_inserts_native_field(tmp_path: Path):
     document_xml = _read_zip_part(doc_path, "word/document.xml")
     settings_xml = _read_zip_part(doc_path, "word/settings.xml")
     assert 'TOC \\o "1-3" \\h \\z \\u' in document_xml
+    assert "<w:updateFields" in settings_xml
+
+
+def test_markdown_toc_marker_inserts_native_field(tmp_path: Path):
+    doc_path = tmp_path / "markdown-toc.docx"
+    markdown = """# Cover
+
+<!-- TOC -->
+
+# Scope
+
+## Details
+"""
+
+    result = replace_document_with_markdown(str(doc_path), markdown)
+
+    assert result["inserted_blocks"] == 5
+
+    document_xml = _read_zip_part(doc_path, "word/document.xml")
+    settings_xml = _read_zip_part(doc_path, "word/settings.xml")
+    assert 'TOC \\o "1-3" \\h \\z \\u' in document_xml
+    assert "Right-click to update field." in document_xml
+    assert "<w:updateFields" in settings_xml
+
+
+def test_markdown_wadocx_toc_directive_supports_options(tmp_path: Path):
+    doc_path = tmp_path / "markdown-configured-toc.docx"
+    markdown = """<!-- wadocx:toc
+title: DAFTAR ISI
+max_level: 2
+page_break_after: true
+-->
+
+# BAB I
+
+### Skipped Level
+"""
+
+    result = replace_document_with_markdown(str(doc_path), markdown)
+
+    assert result["inserted_blocks"] == 5
+
+    document_xml = _read_zip_part(doc_path, "word/document.xml")
+    settings_xml = _read_zip_part(doc_path, "word/settings.xml")
+    assert "DAFTAR ISI" in document_xml
+    assert 'TOC \\o "1-2" \\h \\z \\u' in document_xml
+    assert 'w:type="page"' in document_xml
     assert "<w:updateFields" in settings_xml
 
 

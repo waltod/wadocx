@@ -32,6 +32,7 @@ ORDERED_LIST_RE = re.compile(r"^\s*(\d+)\.\s+(.*)$")
 BULLET_LIST_RE = re.compile(r"^\s*[-*+]\s+(.*)$")
 IMAGE_RE = re.compile(r'^!\[(?P<alt>.*?)\]\((?P<path><.*?>|[^)]+)\)$')
 PAGE_BREAK_RE = re.compile(r"^<!--\s*PAGE BREAK\s*-->$")
+TOC_RE = re.compile(r"^<!--\s*(?:TOC|wadocx:toc)(?P<body>.*?)-->\s*$", re.IGNORECASE | re.DOTALL)
 DIV_OPEN_RE = re.compile(r'^<div\s+align="(?P<align>left|center|right|justify)"\s*>$', re.IGNORECASE)
 DIV_CLOSE_RE = re.compile(r"^</div>$", re.IGNORECASE)
 FIDELITY_RE = re.compile(
@@ -71,6 +72,66 @@ def _is_table_separator_row(cells: List[str]) -> bool:
         if normalized:
             return False
     return True
+
+
+def _parse_bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _parse_toc_directive(comment_text: str) -> Optional[Dict[str, Any]]:
+    """Parse a Markdown TOC directive into a native Word TOC block."""
+    match = TOC_RE.match(comment_text.strip())
+    if not match:
+        return None
+
+    body = match.group("body").strip()
+    block: Dict[str, Any] = {
+        "type": "toc",
+        "title": "Contents",
+        "max_level": 3,
+        "add_page_break_after": False,
+    }
+    if not body:
+        return block
+
+    metadata: Dict[str, str] = {}
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("<!--") or line == "-->":
+            continue
+        if ":" in line:
+            key, value = line.split(":", 1)
+            metadata[key.strip().lower().replace("-", "_")] = _strip_wrapping_quotes(value)
+
+    for key, value in re.findall(r"([A-Za-z_][\w-]*)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s]+)", body):
+        metadata[key.strip().lower().replace("-", "_")] = _strip_wrapping_quotes(value)
+
+    if "title" in metadata:
+        block["title"] = metadata["title"]
+    if metadata.get("title", "").strip().lower() in {"none", "false", "off"}:
+        block["title"] = ""
+    if "max_level" in metadata:
+        try:
+            block["max_level"] = max(1, min(int(metadata["max_level"]), 9))
+        except ValueError:
+            pass
+    if "level" in metadata and "max_level" not in metadata:
+        try:
+            block["max_level"] = max(1, min(int(metadata["level"]), 9))
+        except ValueError:
+            pass
+    if "add_page_break_after" in metadata:
+        block["add_page_break_after"] = _parse_bool(metadata["add_page_break_after"])
+    if "page_break_after" in metadata:
+        block["add_page_break_after"] = _parse_bool(metadata["page_break_after"])
+    return block
 
 
 def _normalize_markdown_image_path(path_text: str) -> str:
@@ -322,6 +383,22 @@ def parse_markdown_blocks(markdown_text: str) -> List[Dict[str, Any]]:
         if PAGE_BREAK_RE.match(stripped):
             flush_paragraph()
             blocks.append({"type": "page_break"})
+            i += 1
+            continue
+
+        lowered = stripped.lower()
+        if lowered.startswith("<!--toc") or lowered.startswith("<!-- toc") or lowered.startswith("<!-- wadocx:toc"):
+            flush_paragraph()
+            comment_lines = [line]
+            while "-->" not in comment_lines[-1] and i + 1 < len(lines):
+                i += 1
+                comment_lines.append(lines[i])
+            toc_block = _parse_toc_directive("\n".join(comment_lines))
+            if toc_block:
+                blocks.append(toc_block)
+                i += 1
+                continue
+            paragraph_lines.extend(comment_lines)
             i += 1
             continue
 

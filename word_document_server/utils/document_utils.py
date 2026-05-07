@@ -6,7 +6,7 @@ import os
 from typing import Dict, List, Any, Optional
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
 from docx.oxml.ns import qn
@@ -535,6 +535,94 @@ def insert_text_paragraph_after_element(doc, anchor_element, text: str, style_na
     return new_para._element
 
 
+def ensure_update_fields_on_open(doc) -> None:
+    """Ask Word to update fields when the document opens."""
+    settings_element = doc.settings.element
+    update_fields = settings_element.find(qn("w:updateFields"))
+    if update_fields is None:
+        update_fields = OxmlElement("w:updateFields")
+        settings_element.append(update_fields)
+    update_fields.set(qn("w:val"), "true")
+
+
+def append_field_code_run(paragraph, instruction: str, display_text: str = "") -> None:
+    """Append a native Word field code to a paragraph."""
+    p = paragraph._p
+
+    begin_run = OxmlElement("w:r")
+    fld_char_begin = OxmlElement("w:fldChar")
+    fld_char_begin.set(qn("w:fldCharType"), "begin")
+    fld_char_begin.set(qn("w:dirty"), "true")
+    begin_run.append(fld_char_begin)
+    p.append(begin_run)
+
+    instr_run = OxmlElement("w:r")
+    instr_text = OxmlElement("w:instrText")
+    instr_text.set(qn("xml:space"), "preserve")
+    instr_text.text = f" {instruction} "
+    instr_run.append(instr_text)
+    p.append(instr_run)
+
+    separate_run = OxmlElement("w:r")
+    fld_char_sep = OxmlElement("w:fldChar")
+    fld_char_sep.set(qn("w:fldCharType"), "separate")
+    separate_run.append(fld_char_sep)
+    p.append(separate_run)
+
+    if display_text:
+        paragraph.add_run(display_text)
+
+    end_run = OxmlElement("w:r")
+    fld_char_end = OxmlElement("w:fldChar")
+    fld_char_end.set(qn("w:fldCharType"), "end")
+    end_run.append(fld_char_end)
+    p.append(end_run)
+
+
+def insert_live_toc_after_element(
+    doc,
+    anchor_element,
+    title: Optional[str] = "Contents",
+    max_level: int = 3,
+    add_page_break_after: bool = False,
+):
+    """Insert a native Word TOC field after a body element."""
+    ensure_update_fields_on_open(doc)
+    max_level = max(1, min(int(max_level), 9))
+    current_element = anchor_element
+    inserted = 0
+
+    if title:
+        title_para = doc.add_paragraph(title)
+        try:
+            title_para.style = "TOC Heading"
+        except KeyError:
+            if title_para.runs:
+                title_para.runs[0].bold = True
+        current_element.addnext(title_para._element)
+        current_element = title_para._element
+        inserted += 1
+
+    toc_para = doc.add_paragraph()
+    append_field_code_run(
+        toc_para,
+        f'TOC \\o "1-{max_level}" \\h \\z \\u',
+        display_text="Right-click to update field.",
+    )
+    current_element.addnext(toc_para._element)
+    current_element = toc_para._element
+    inserted += 1
+
+    if add_page_break_after:
+        page_break_para = doc.add_paragraph()
+        page_break_para.add_run().add_break(WD_BREAK.PAGE)
+        current_element.addnext(page_break_para._element)
+        current_element = page_break_para._element
+        inserted += 1
+
+    return current_element, inserted
+
+
 def insert_content_blocks_after_element(
     doc,
     anchor_element,
@@ -544,7 +632,7 @@ def insert_content_blocks_after_element(
     """
     Insert parsed content blocks after an anchor element.
 
-    Supported block types: paragraph, heading, list, table, image.
+    Supported block types: paragraph, heading, list, table, image, toc.
     Returns the number of body elements inserted.
     """
     current_element = anchor_element
@@ -560,6 +648,17 @@ def insert_content_blocks_after_element(
             current_element.addnext(new_para._element)
             current_element = new_para._element
             inserted += 1
+            continue
+
+        if block_type == "toc":
+            current_element, added = insert_live_toc_after_element(
+                doc,
+                current_element,
+                title=block.get("title", "Contents"),
+                max_level=block.get("max_level", 3),
+                add_page_break_after=bool(block.get("add_page_break_after")),
+            )
+            inserted += added
             continue
 
         if block_type == "list":

@@ -260,6 +260,14 @@ path: C:\path\to\iso_format_new.md
 Centered paragraph
 </div>
 
+<!-- TOC -->
+
+<!-- wadocx:toc
+title: Contents
+max_level: 3
+page_break_after: true
+-->
+
 ![Figure caption](<C:\path\to\image.png>)
 
 <!-- PAGE BREAK -->
@@ -268,6 +276,8 @@ Centered paragraph
 ```
 
 - `wadocx:base-template-md` loads a markdown-exported template. If that template markdown contains a fidelity bundle, WaDocx restores the original template first and then replaces the body from markdown.
+- `<!-- TOC -->` inserts a native Word table-of-contents field at that point in the Markdown-rendered document.
+- `wadocx:toc` supports `title`, `max_level`/`level`, and `page_break_after`/`add_page_break_after` options for the native Word TOC field.
 - `<!-- PAGE BREAK -->` starts a new Word section where possible and preserves section-level header/footer state from the template.
 - `<div align="left|center|right|justify">` applies paragraph alignment to the rendered block.
 - Markdown image paths can be absolute paths or paths relative to the markdown file being compiled.
