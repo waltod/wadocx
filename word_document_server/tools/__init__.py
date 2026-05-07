@@ -48,8 +48,10 @@ from word_document_server.tools.comment_tools import (
 
 # Markdown tools
 from word_document_server.tools.markdown_tools import (
-    get_document_markdown, export_document_markdown_to_file,
-    replace_document_with_markdown, replace_section_with_markdown
+    get_document_markdown, export_document_markdown,
+    export_document_markdown_to_file,
+    replace_document_with_markdown, replace_document_with_markdown_file,
+    replace_section_with_markdown
 )
 
 # ISO template tools

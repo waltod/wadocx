@@ -5,12 +5,13 @@ import base64
 import hashlib
 import os
 import re
+import shutil
 import textwrap
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 from docx import Document
-from docx.enum.text import WD_BREAK
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml.ns import qn
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
@@ -31,7 +32,9 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 ORDERED_LIST_RE = re.compile(r"^\s*(\d+)\.\s+(.*)$")
 BULLET_LIST_RE = re.compile(r"^\s*[-*+]\s+(.*)$")
 IMAGE_RE = re.compile(r'^!\[(?P<alt>.*?)\]\((?P<path><.*?>|[^)]+)\)$')
+IMAGE_LINK_RE = re.compile(r'!\[(?P<alt>(?:\\\]|[^\]])*)\]\(<(?P<path>[^>]+)>\)')
 PAGE_BREAK_RE = re.compile(r"^<!--\s*PAGE BREAK\s*-->$")
+SECTION_BREAK_RE = re.compile(r"^<!--\s*SECTION BREAK\s*-->$")
 TOC_RE = re.compile(r"^<!--\s*(?:TOC|wadocx:toc)(?P<body>.*?)-->\s*$", re.IGNORECASE | re.DOTALL)
 DIV_OPEN_RE = re.compile(r'^<div\s+align="(?P<align>left|center|right|justify)"\s*>$', re.IGNORECASE)
 DIV_CLOSE_RE = re.compile(r"^</div>$", re.IGNORECASE)
@@ -45,6 +48,12 @@ BASE_TEMPLATE_RE = re.compile(
 )
 
 FIDELITY_VERSION = "1"
+REPLACE_MODES = {
+    "auto",
+    "exact_restore",
+    "editable_rebuild",
+    "editable_rebuild_with_template",
+}
 
 
 def _normalize_inline_markdown_text(text: str) -> str:
@@ -83,6 +92,30 @@ def _strip_wrapping_quotes(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     return value
+
+
+def _normalize_replace_mode(mode: str) -> str:
+    normalized = (mode or "auto").strip().lower().replace("-", "_")
+    aliases = {
+        "exact": "exact_restore",
+        "restore": "exact_restore",
+        "editable": "editable_rebuild",
+        "rebuild": "editable_rebuild",
+        "template": "editable_rebuild_with_template",
+        "editable_with_template": "editable_rebuild_with_template",
+        "rebuild_with_template": "editable_rebuild_with_template",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in REPLACE_MODES:
+        allowed = ", ".join(sorted(REPLACE_MODES))
+        raise ValueError(f"Unsupported markdown replace mode '{mode}'. Supported modes: {allowed}.")
+    return normalized
+
+
+def _match_leading_directive(pattern: re.Pattern, markdown_text: str):
+    normalized_text = markdown_text.lstrip("\ufeff \t\r\n")
+    offset = len(markdown_text) - len(normalized_text)
+    return pattern.match(normalized_text), offset
 
 
 def _parse_toc_directive(comment_text: str) -> Optional[Dict[str, Any]]:
@@ -217,6 +250,74 @@ def _get_paragraph_image_blocks(doc, para, media_dir: str) -> List[Dict[str, str
     return blocks
 
 
+def _paragraph_alignment_name(para) -> Optional[str]:
+    alignment_map = {
+        WD_ALIGN_PARAGRAPH.LEFT: "left",
+        WD_ALIGN_PARAGRAPH.CENTER: "center",
+        WD_ALIGN_PARAGRAPH.RIGHT: "right",
+        WD_ALIGN_PARAGRAPH.JUSTIFY: "justify",
+    }
+    return alignment_map.get(para.alignment)
+
+
+def _paragraph_has_page_break(para) -> bool:
+    for node in para._element.iter():
+        if node.tag == qn("w:br") and node.get(qn("w:type")) == "page":
+            return True
+    return False
+
+
+def _paragraph_has_section_break(para) -> bool:
+    p_pr = para._element.find(qn("w:pPr"))
+    return p_pr is not None and p_pr.find(qn("w:sectPr")) is not None
+
+
+def _paragraph_exports_page_boundary(para) -> bool:
+    return _paragraph_has_page_break(para) or _paragraph_has_section_break(para)
+
+
+def _append_exported_boundaries(blocks: List[Dict[str, Any]], para) -> None:
+    if _paragraph_has_page_break(para):
+        blocks.append({"type": "page_break"})
+    if _paragraph_has_section_break(para):
+        blocks.append({"type": "section_break"})
+
+
+def _paragraph_field_instructions(para) -> List[str]:
+    instructions: List[str] = []
+    for instr_text in para._element.iter(qn("w:instrText")):
+        if instr_text.text:
+            instructions.append(instr_text.text.strip())
+    return instructions
+
+
+def _toc_block_from_paragraph(para) -> Optional[Dict[str, Any]]:
+    for instruction in _paragraph_field_instructions(para):
+        normalized = " ".join(instruction.split())
+        if not normalized.upper().startswith("TOC "):
+            continue
+
+        max_level = 3
+        level_match = re.search(r'\\o\s+"1-(\d+)"', normalized)
+        if level_match:
+            max_level = max(1, min(int(level_match.group(1)), 9))
+
+        toc_style = "dotted"
+        if re.search(r'\\n\s+"1-\d+"', normalized):
+            toc_style = "links"
+        elif re.search(r'\\p\s+" "', normalized):
+            toc_style = "page_numbers"
+
+        return {
+            "type": "toc",
+            "title": "",
+            "max_level": max_level,
+            "toc_style": toc_style,
+            "add_page_break_after": False,
+        }
+    return None
+
+
 def _build_fidelity_bundle(doc_path: str) -> str:
     """Encode the original DOCX as a markdown comment for exact round-tripping."""
     with open(doc_path, "rb") as docx_file:
@@ -241,7 +342,7 @@ def _build_fidelity_bundle(doc_path: str) -> str:
 
 def _extract_fidelity_bundle(markdown_text: str) -> Optional[Dict[str, Any]]:
     """Parse a fidelity bundle comment from markdown text."""
-    match = FIDELITY_RE.match(markdown_text)
+    match, offset = _match_leading_directive(FIDELITY_RE, markdown_text)
     if not match:
         return None
 
@@ -270,7 +371,7 @@ def _extract_fidelity_bundle(markdown_text: str) -> Optional[Dict[str, Any]]:
     return {
         "metadata": metadata,
         "payload": payload,
-        "match_end": match.end(),
+        "match_end": offset + match.end(),
     }
 
 
@@ -289,9 +390,12 @@ def _restore_docx_from_fidelity_bundle(doc_path: str, bundle: Dict[str, Any]) ->
     }
 
 
-def _extract_base_template_directive(markdown_text: str) -> Optional[Dict[str, Any]]:
+def _extract_base_template_directive(
+    markdown_text: str,
+    source_base_dir: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """Parse an optional base-template directive from markdown text."""
-    match = BASE_TEMPLATE_RE.match(markdown_text)
+    match, offset = _match_leading_directive(BASE_TEMPLATE_RE, markdown_text)
     if not match:
         return None
 
@@ -303,14 +407,17 @@ def _extract_base_template_directive(markdown_text: str) -> Optional[Dict[str, A
         key, value = line.split(":", 1)
         metadata[key.strip().lower()] = value.strip()
 
-    template_path = metadata.get("path")
+    template_path = _strip_wrapping_quotes(metadata.get("path", ""))
     if not template_path:
         return None
+    template_path = os.path.expanduser(template_path)
+    if source_base_dir and not os.path.isabs(template_path):
+        template_path = os.path.join(source_base_dir, template_path)
 
     return {
         "metadata": metadata,
-        "template_path": os.path.normpath(os.path.expanduser(template_path)),
-        "match_end": match.end(),
+        "template_path": os.path.normpath(template_path),
+        "match_end": offset + match.end(),
     }
 
 
@@ -391,6 +498,12 @@ def parse_markdown_blocks(markdown_text: str) -> List[Dict[str, Any]]:
             i += 1
             continue
 
+        if SECTION_BREAK_RE.match(stripped):
+            flush_paragraph()
+            blocks.append({"type": "section_break"})
+            i += 1
+            continue
+
         lowered = stripped.lower()
         if lowered.startswith("<!--toc") or lowered.startswith("<!-- toc") or lowered.startswith("<!-- wadocx:toc"):
             flush_paragraph()
@@ -400,6 +513,8 @@ def parse_markdown_blocks(markdown_text: str) -> List[Dict[str, Any]]:
                 comment_lines.append(lines[i])
             toc_block = _parse_toc_directive("\n".join(comment_lines))
             if toc_block:
+                if current_alignment:
+                    toc_block["alignment"] = current_alignment
                 blocks.append(toc_block)
                 i += 1
                 continue
@@ -498,7 +613,7 @@ def _paragraph_list_kind(para) -> Optional[str]:
     return "unordered"
 
 
-def document_to_markdown(doc_path: str) -> str:
+def document_to_markdown(doc_path: str, include_fidelity_bundle: bool = True) -> str:
     """Export a Word document to a simple markdown representation."""
     if not os.path.exists(doc_path):
         return f"Document {doc_path} does not exist"
@@ -512,10 +627,26 @@ def document_to_markdown(doc_path: str) -> str:
             para = get_paragraph_from_element(doc, el)
             if para is None:
                 continue
+            toc_block = _toc_block_from_paragraph(para)
+            if toc_block:
+                if blocks and blocks[-1].get("toc_title"):
+                    title_block = blocks.pop()
+                    toc_block["title"] = title_block["text"]
+                    if title_block.get("alignment"):
+                        toc_block["alignment"] = title_block["alignment"]
+                blocks.append(toc_block)
+                _append_exported_boundaries(blocks, para)
+                continue
+
             image_blocks = _get_paragraph_image_blocks(doc, para, media_dir)
             text = para.text.rstrip()
+            alignment = _paragraph_alignment_name(para)
+            if alignment:
+                for image_block in image_blocks:
+                    image_block["alignment"] = alignment
             if not text:
                 blocks.extend(image_blocks)
+                _append_exported_boundaries(blocks, para)
                 continue
 
             style_name = para.style.name if para.style else ""
@@ -524,8 +655,21 @@ def document_to_markdown(doc_path: str) -> str:
                     level = int(style_name.split(" ")[1])
                 except (IndexError, ValueError):
                     level = 1
-                blocks.append({"type": "heading", "level": level, "text": text})
+                block = {"type": "heading", "level": level, "text": text}
+                if alignment:
+                    block["alignment"] = alignment
+                blocks.append(block)
                 blocks.extend(image_blocks)
+                _append_exported_boundaries(blocks, para)
+                continue
+
+            if style_name == "TOC Heading":
+                block = {"type": "paragraph", "text": text, "toc_title": True}
+                if alignment:
+                    block["alignment"] = alignment
+                blocks.append(block)
+                blocks.extend(image_blocks)
+                _append_exported_boundaries(blocks, para)
                 continue
 
             list_kind = _paragraph_list_kind(para)
@@ -534,12 +678,20 @@ def document_to_markdown(doc_path: str) -> str:
                 if blocks and blocks[-1]["type"] == "list" and blocks[-1]["ordered"] == ordered:
                     blocks[-1]["items"].append(text)
                 else:
-                    blocks.append({"type": "list", "ordered": ordered, "items": [text]})
+                    block = {"type": "list", "ordered": ordered, "items": [text]}
+                    if alignment:
+                        block["alignment"] = alignment
+                    blocks.append(block)
                 blocks.extend(image_blocks)
+                _append_exported_boundaries(blocks, para)
                 continue
 
-            blocks.append({"type": "paragraph", "text": text})
+            block = {"type": "paragraph", "text": text}
+            if alignment:
+                block["alignment"] = alignment
+            blocks.append(block)
             blocks.extend(image_blocks)
+            _append_exported_boundaries(blocks, para)
             continue
 
         if is_table_element(el):
@@ -551,9 +703,16 @@ def document_to_markdown(doc_path: str) -> str:
                 blocks.append({"type": "table", "rows": rows})
 
     rendered_blocks: List[str] = []
+
+    def render_aligned(markdown_block: str, block: Dict[str, Any]) -> str:
+        alignment = block.get("alignment")
+        if not alignment:
+            return markdown_block
+        return f'<div align="{alignment}">\n{markdown_block}\n</div>'
+
     for block in blocks:
         if block["type"] == "heading":
-            rendered_blocks.append(f"{'#' * block['level']} {block['text']}")
+            rendered_blocks.append(render_aligned(f"{'#' * block['level']} {block['text']}", block))
             continue
 
         if block["type"] == "list":
@@ -562,7 +721,7 @@ def document_to_markdown(doc_path: str) -> str:
             for index, item in enumerate(block["items"], start=1):
                 marker = f"{index}." if block["ordered"] else prefix
                 lines.append(f"{marker} {item}")
-            rendered_blocks.append("\n".join(lines))
+            rendered_blocks.append(render_aligned("\n".join(lines), block))
             continue
 
         if block["type"] == "table":
@@ -581,31 +740,85 @@ def document_to_markdown(doc_path: str) -> str:
             ]
             for row in rows[1:]:
                 lines.append(f"| {' | '.join(pad(row))} |")
-            rendered_blocks.append("\n".join(lines))
+            rendered_blocks.append(render_aligned("\n".join(lines), block))
             continue
 
         if block["type"] == "image":
             alt_text = block.get("alt", "").replace("]", "\\]")
             image_path = block.get("path", "")
-            rendered_blocks.append(f"![{alt_text}](<{image_path}>)")
+            rendered_blocks.append(render_aligned(f"![{alt_text}](<{image_path}>)", block))
             continue
 
-        rendered_blocks.append(block["text"])
+        if block["type"] == "page_break":
+            rendered_blocks.append("<!-- PAGE BREAK -->")
+            continue
+
+        if block["type"] == "section_break":
+            rendered_blocks.append("<!-- SECTION BREAK -->")
+            continue
+
+        if block["type"] == "toc":
+            title = block.get("title", "Contents")
+            title_value = title if title else "none"
+            max_level = block.get("max_level", 3)
+            toc_style = block.get("toc_style", "dotted")
+            rendered_blocks.append(render_aligned(
+                "<!-- wadocx:toc\n"
+                f"title: {title_value}\n"
+                f"max_level: {max_level}\n"
+                f"style: {toc_style}\n"
+                "-->",
+                block,
+            ))
+            continue
+
+        rendered_blocks.append(render_aligned(block["text"], block))
 
     markdown_body = "\n\n".join(rendered_blocks)
+    if not include_fidelity_bundle:
+        return markdown_body
     fidelity_bundle = _build_fidelity_bundle(doc_path)
     return f"{fidelity_bundle}\n\n{markdown_body}"
 
 
-def export_document_markdown(doc_path: str, output_path: Optional[str] = None) -> str:
+def export_document_markdown(
+    doc_path: str,
+    output_path: Optional[str] = None,
+    include_fidelity_bundle: bool = True,
+) -> str:
     """Export a document to markdown on disk and return the output path."""
-    markdown = document_to_markdown(doc_path)
+    markdown = document_to_markdown(doc_path, include_fidelity_bundle=include_fidelity_bundle)
     if markdown.startswith("Document ") and markdown.endswith(" does not exist"):
         return markdown
 
     if output_path is None:
         base_name, _ = os.path.splitext(doc_path)
         output_path = f"{base_name}.md"
+
+    markdown_dir = os.path.dirname(os.path.abspath(output_path)) or os.getcwd()
+    output_stem = os.path.splitext(os.path.basename(output_path))[0]
+    output_media_dir = os.path.join(markdown_dir, f"{output_stem}_media")
+    media_copies: Dict[str, str] = {}
+
+    def relativize_image_link(match: re.Match) -> str:
+        image_path = match.group("path")
+        if not os.path.isabs(image_path):
+            return match.group(0)
+        target_path = media_copies.get(image_path)
+        if target_path is None:
+            os.makedirs(output_media_dir, exist_ok=True)
+            target_path = os.path.join(output_media_dir, os.path.basename(image_path))
+            if os.path.abspath(image_path) != os.path.abspath(target_path):
+                shutil.copy2(image_path, target_path)
+            media_copies[image_path] = target_path
+        try:
+            relative_path = os.path.relpath(target_path, markdown_dir)
+        except ValueError:
+            return match.group(0)
+        relative_path = relative_path.replace(os.sep, "/")
+        return f"![{match.group('alt')}](<{relative_path}>)"
+
+    markdown = IMAGE_LINK_RE.sub(relativize_image_link, markdown)
 
     with open(output_path, "w", encoding="utf-8") as markdown_file:
         markdown_file.write(markdown)
@@ -625,28 +838,51 @@ def clear_document_body(doc) -> None:
 def _insert_page_break_after_element(
     doc,
     anchor_element,
-    section_break_elements: Optional[List[Any]] = None,
 ):
-    """Insert either a template section break or a simple page break after the anchor."""
-    if section_break_elements:
-        section_break = section_break_elements.pop(0)
-        anchor_element.addnext(section_break)
-        return section_break, 1
-
+    """Insert a simple page break after the anchor."""
     new_para = doc.add_paragraph("")
     new_para.add_run().add_break(WD_BREAK.PAGE)
     anchor_element.addnext(new_para._element)
     return new_para._element, 1
 
 
-def replace_document_with_markdown(doc_path: str, markdown_text: str) -> Dict[str, Any]:
-    """Replace the body of a document with parsed markdown blocks."""
-    fidelity_bundle = _extract_fidelity_bundle(markdown_text)
-    if fidelity_bundle:
-        return _restore_docx_from_fidelity_bundle(doc_path, fidelity_bundle)
+def _insert_section_break_after_element(
+    doc,
+    anchor_element,
+    section_break_elements: Optional[List[Any]] = None,
+):
+    """Insert a template section break when available, otherwise fall back to a page break."""
+    if section_break_elements:
+        section_break = section_break_elements.pop(0)
+        anchor_element.addnext(section_break)
+        return section_break, 1
+    return _insert_page_break_after_element(doc, anchor_element)
 
-    base_template = _extract_base_template_directive(markdown_text)
+
+def replace_document_with_markdown(
+    doc_path: str,
+    markdown_text: str,
+    mode: str = "auto",
+    source_base_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Replace the body of a document with parsed markdown blocks."""
+    replace_mode = _normalize_replace_mode(mode)
+    fidelity_bundle = _extract_fidelity_bundle(markdown_text)
+    if fidelity_bundle and replace_mode in {"auto", "exact_restore"}:
+        return _restore_docx_from_fidelity_bundle(doc_path, fidelity_bundle)
+    if replace_mode == "exact_restore":
+        return {"error": "Exact restore mode requires a wadocx:fidelity-bundle."}
+
     section_break_elements: List[Any] = []
+    if fidelity_bundle and replace_mode == "editable_rebuild_with_template":
+        _restore_docx_from_fidelity_bundle(doc_path, fidelity_bundle)
+        template_doc = Document(doc_path)
+        section_break_elements = _extract_template_section_breaks(template_doc)
+        markdown_text = markdown_text[fidelity_bundle["match_end"] :].lstrip()
+    elif fidelity_bundle and replace_mode == "editable_rebuild":
+        markdown_text = markdown_text[fidelity_bundle["match_end"] :].lstrip()
+
+    base_template = _extract_base_template_directive(markdown_text, source_base_dir)
     if base_template:
         template_path = base_template["template_path"]
         if not os.path.exists(template_path):
@@ -654,17 +890,23 @@ def replace_document_with_markdown(doc_path: str, markdown_text: str) -> Dict[st
         with open(template_path, "r", encoding="utf-8") as template_file:
             template_markdown = template_file.read()
         template_bundle = _extract_fidelity_bundle(template_markdown)
-        if template_bundle:
-            _restore_docx_from_fidelity_bundle(doc_path, template_bundle)
-            template_doc = Document(doc_path)
-            section_break_elements = _extract_template_section_breaks(template_doc)
+        if not template_bundle:
+            return {
+                "error": (
+                    "Base template markdown must include a wadocx:fidelity-bundle "
+                    f"to preserve template structure: {template_path}"
+                )
+            }
+        _restore_docx_from_fidelity_bundle(doc_path, template_bundle)
+        template_doc = Document(doc_path)
+        section_break_elements = _extract_template_section_breaks(template_doc)
         markdown_text = markdown_text[base_template["match_end"] :].lstrip()
 
     doc = Document(doc_path) if os.path.exists(doc_path) else Document()
     clear_document_body(doc)
 
     blocks = parse_markdown_blocks(markdown_text)
-    base_dir = os.path.dirname(os.path.abspath(doc_path))
+    base_dir = source_base_dir or os.path.dirname(os.path.abspath(doc_path))
     for block in blocks:
         if block.get("type") == "image":
             block["path"] = _resolve_markdown_image_path(block.get("path", ""), base_dir)
@@ -674,6 +916,13 @@ def replace_document_with_markdown(doc_path: str, markdown_text: str) -> Dict[st
     for block in blocks:
         if block.get("type") == "page_break":
             current_element, added = _insert_page_break_after_element(
+                doc,
+                current_element,
+            )
+            inserted += added
+            continue
+        if block.get("type") == "section_break":
+            current_element, added = _insert_section_break_after_element(
                 doc,
                 current_element,
                 section_break_elements,

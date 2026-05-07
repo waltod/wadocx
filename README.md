@@ -243,7 +243,8 @@ Once configured, you can ask Claude to perform operations like:
 WaDocx supports markdown as the safer drafting surface for heavy revision loops. The markdown tools are designed for two different workflows:
 
 - **Editable markdown rebuild**: headings, paragraphs, lists, tables, images, page breaks, and simple alignment blocks are parsed from markdown and rendered back into Word.
-- **Exact DOCX restore**: exported markdown includes a `wadocx:fidelity-bundle` comment containing the source DOCX bytes and SHA-256 hash. Passing that exported markdown to `replace_document_with_markdown` restores the original DOCX exactly.
+- **Exact DOCX restore**: exported markdown can include a `wadocx:fidelity-bundle` comment containing the source DOCX bytes and SHA-256 hash. Passing that exported markdown to `replace_document_with_markdown` with the default `mode="auto"` restores the original DOCX exactly.
+- **Template-backed editable rebuild**: exported markdown with a fidelity bundle can also be used as a template source with `mode="editable_rebuild_with_template"` so the editable markdown body is rebuilt while section breaks, headers, footers, and styles come from the original DOCX.
 
 Use exact restore when the goal is archival fidelity or a no-loss round trip. Use editable rebuild when the goal is clause-by-clause drafting and review.
 
@@ -276,13 +277,17 @@ page_break_after: true
 ## Clause Title
 ```
 
-- `wadocx:base-template-md` loads a markdown-exported template. If that template markdown contains a fidelity bundle, WaDocx restores the original template first and then replaces the body from markdown.
+- `wadocx:base-template-md` loads a markdown-exported template. That template markdown must include a `wadocx:fidelity-bundle`, produced by the default export mode, so WaDocx can restore the original template first and then replace the body from markdown.
 - `<!-- TOC -->` inserts a native Word table-of-contents field at that point in the Markdown-rendered document.
 - `wadocx:toc` supports `title`, `max_level`/`level`, `style`/`toc_style`, and `page_break_after`/`add_page_break_after` options for the native Word TOC field.
 - TOC styles are `dotted` (default dotted leaders with page numbers), `page_numbers`/`plain` (page numbers without dotted leaders), and `links`/`web` (hyperlinked entries without page numbers).
-- `<!-- PAGE BREAK -->` starts a new Word section where possible and preserves section-level header/footer state from the template.
+- `<!-- PAGE BREAK -->` inserts a plain Word page break.
+- `<!-- SECTION BREAK -->` marks a template section boundary and preserves section-level header/footer state from the template.
 - `<div align="left|center|right|justify">` applies paragraph alignment to the rendered block.
 - Markdown image paths can be absolute paths or paths relative to the markdown file being compiled.
+- Use `replace_document_with_markdown_file(output_docx_path, markdown_path, mode="...")` for file-backed drafts; relative image and `wadocx:base-template-md` paths resolve against the markdown file's directory.
+- Use `include_fidelity_bundle=False` on `get_document_markdown` / `export_document_markdown` when the goal is editable markdown without exact-restore bytes.
+- `replace_document_with_markdown` modes are `auto`, `exact_restore`, `editable_rebuild`, and `editable_rebuild_with_template`.
 
 ### ISO Template Compiler
 
@@ -306,14 +311,15 @@ create_document(filename, title=None, author=None)
 get_document_info(filename)
 get_document_text(filename)
 get_document_outline(filename)
-get_document_markdown(filename)
+get_document_markdown(filename, include_fidelity_bundle=True)
 get_document_header(filename, section_index=0, header_type="default")
 get_document_footer(filename, section_index=0, footer_type="default")
 list_available_documents(directory=".")
 copy_document(source_filename, destination_filename=None)
 convert_to_pdf(filename, output_filename=None)
-export_document_markdown(filename, output_filename=None)
-replace_document_with_markdown(filename, markdown_text)
+export_document_markdown(filename, output_filename=None, include_fidelity_bundle=True)
+replace_document_with_markdown(filename, markdown_text, mode="auto", source_base_dir=None)
+replace_document_with_markdown_file(filename, markdown_path, mode="auto")
 replace_section_with_markdown(filename, header_text, markdown_text)
 compile_iso_template_draft(markdown_path, template_docx_path, output_docx_path)
 set_document_header(filename, text, section_index=0, header_type="default", font_name=None, font_size=None, bold=None, italic=None, color=None, alignment=None)
@@ -359,7 +365,8 @@ insert_numbered_list_near_text(filename, target_text=None, list_items=None,
 #   'number' - Creates numbered list (1, 2, 3, ...)
 
 # Replace or revise content using markdown as the drafting surface
-replace_document_with_markdown(filename, markdown_text)
+replace_document_with_markdown(filename, markdown_text, mode="auto", source_base_dir=None)
+replace_document_with_markdown_file(filename, markdown_path, mode="auto")
 replace_section_with_markdown(filename, header_text, markdown_text)
 compile_iso_template_draft(markdown_path, template_docx_path, output_docx_path)
 ```

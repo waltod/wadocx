@@ -616,6 +616,7 @@ def insert_live_toc_after_element(
     max_level: int = 3,
     add_page_break_after: bool = False,
     toc_style: str = "dotted",
+    alignment: Optional[str] = None,
 ):
     """Insert a native Word TOC field after a body element."""
     ensure_update_fields_on_open(doc)
@@ -630,6 +631,7 @@ def insert_live_toc_after_element(
         except KeyError:
             if title_para.runs:
                 title_para.runs[0].bold = True
+        apply_block_alignment(title_para, alignment)
         current_element.addnext(title_para._element)
         current_element = title_para._element
         inserted += 1
@@ -640,6 +642,7 @@ def insert_live_toc_after_element(
         build_toc_instruction(max_level=max_level, toc_style=toc_style),
         display_text="Right-click to update field.",
     )
+    apply_block_alignment(toc_para, alignment)
     current_element.addnext(toc_para._element)
     current_element = toc_para._element
     inserted += 1
@@ -663,7 +666,7 @@ def insert_content_blocks_after_element(
     """
     Insert parsed content blocks after an anchor element.
 
-    Supported block types: paragraph, heading, list, table, image, page_break, toc.
+    Supported block types: paragraph, heading, list, table, image, page_break, section_break, toc.
     Returns the number of body elements inserted.
     """
     current_element = anchor_element
@@ -689,11 +692,20 @@ def insert_content_blocks_after_element(
                 max_level=block.get("max_level", 3),
                 add_page_break_after=bool(block.get("add_page_break_after")),
                 toc_style=block.get("toc_style", block.get("style", "dotted")),
+                alignment=block.get("alignment"),
             )
             inserted += added
             continue
 
         if block_type == "page_break":
+            new_para = doc.add_paragraph("")
+            new_para.add_run().add_break(WD_BREAK.PAGE)
+            current_element.addnext(new_para._element)
+            current_element = new_para._element
+            inserted += 1
+            continue
+
+        if block_type == "section_break":
             new_para = doc.add_paragraph("")
             new_para.add_run().add_break(WD_BREAK.PAGE)
             current_element.addnext(new_para._element)

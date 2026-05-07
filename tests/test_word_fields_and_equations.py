@@ -2,6 +2,9 @@ import asyncio
 import zipfile
 from pathlib import Path
 
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+
 from word_document_server.tools.content_tools import (
     add_bookmark_to_paragraph,
     add_internal_hyperlink,
@@ -12,7 +15,7 @@ from word_document_server.tools.content_tools import (
 )
 from word_document_server.tools.content_tools import add_heading, add_paragraph
 from word_document_server.tools.document_tools import create_document
-from word_document_server.utils.markdown_utils import replace_document_with_markdown
+from word_document_server.utils.markdown_utils import document_to_markdown, replace_document_with_markdown
 
 
 def _read_zip_part(doc_path: Path, part_name: str) -> str:
@@ -112,6 +115,108 @@ style: {style}
 
         document_xml = _read_zip_part(doc_path, "word/document.xml")
         assert expected_instruction in document_xml
+
+
+def test_markdown_export_emits_supported_directives(tmp_path: Path):
+    doc_path = tmp_path / "export-directives.docx"
+    doc = Document()
+    centered = doc.add_paragraph("Centered paragraph")
+    centered.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    breaker = doc.add_paragraph("")
+    breaker.add_run().add_break(WD_BREAK.PAGE)
+    doc.add_heading("Scope", level=1)
+    doc.save(doc_path)
+
+    asyncio.run(
+        add_live_table_of_contents(
+            str(doc_path),
+            title="",
+            max_level=2,
+            toc_style="links",
+            insert_at_start=False,
+        )
+    )
+
+    markdown = document_to_markdown(str(doc_path), include_fidelity_bundle=False)
+
+    assert '<div align="center">' in markdown
+    assert "<!-- PAGE BREAK -->" in markdown
+    assert "<!-- wadocx:toc" in markdown
+    assert "max_level: 2" in markdown
+    assert "style: links" in markdown
+
+
+def test_markdown_export_preserves_toc_title_in_directive(tmp_path: Path):
+    source_doc_path = tmp_path / "toc-title-source.docx"
+    rebuilt_doc_path = tmp_path / "toc-title-rebuilt.docx"
+    doc = Document()
+    doc.add_heading("Scope", level=1)
+    doc.save(source_doc_path)
+
+    asyncio.run(
+        add_live_table_of_contents(
+            str(source_doc_path),
+            title="Contents",
+            max_level=2,
+            insert_at_start=True,
+        )
+    )
+
+    markdown = document_to_markdown(str(source_doc_path), include_fidelity_bundle=False)
+    result = replace_document_with_markdown(str(rebuilt_doc_path), markdown)
+
+    assert "<!-- wadocx:toc" in markdown
+    assert "title: Contents" in markdown
+    assert not markdown.startswith("Contents\n\n<!-- wadocx:toc")
+    assert result["inserted_blocks"] >= 2
+    rebuilt_xml = _read_zip_part(rebuilt_doc_path, "word/document.xml")
+    assert "Contents" in rebuilt_xml
+    assert 'TOC \\o "1-2" \\h \\z \\u' in rebuilt_xml
+
+
+def test_markdown_toc_alignment_round_trips(tmp_path: Path):
+    source_doc_path = tmp_path / "toc-alignment-source.docx"
+    rebuilt_doc_path = tmp_path / "toc-alignment-rebuilt.docx"
+    hand_authored_doc_path = tmp_path / "toc-alignment-hand-authored.docx"
+    doc = Document()
+    doc.add_heading("Scope", level=1)
+    doc.save(source_doc_path)
+
+    asyncio.run(
+        add_live_table_of_contents(
+            str(source_doc_path),
+            title="Contents",
+            max_level=2,
+            insert_at_start=True,
+        )
+    )
+    source = Document(source_doc_path)
+    source.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    source.save(source_doc_path)
+
+    markdown = document_to_markdown(str(source_doc_path), include_fidelity_bundle=False)
+    replace_document_with_markdown(str(rebuilt_doc_path), markdown)
+    hand_result = replace_document_with_markdown(
+        str(hand_authored_doc_path),
+        """<div align="center">
+<!-- wadocx:toc
+title: Contents
+max_level: 2
+-->
+</div>
+
+# Scope
+""",
+    )
+
+    rebuilt = Document(rebuilt_doc_path)
+    hand_authored = Document(hand_authored_doc_path)
+    assert '<div align="center">' in markdown
+    assert rebuilt.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert rebuilt.paragraphs[1].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert hand_result["inserted_blocks"] >= 2
+    assert hand_authored.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert hand_authored.paragraphs[1].alignment == WD_ALIGN_PARAGRAPH.CENTER
 
 
 def test_header_and_footer_page_fields_are_written_as_native_fields(tmp_path: Path):

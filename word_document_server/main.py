@@ -6,6 +6,7 @@ Supports multiple transports: stdio, sse, and streamable-http using standalone F
 
 import os
 import sys
+from typing import Annotated
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -15,6 +16,7 @@ load_dotenv()
 os.environ.setdefault('FASTMCP_LOG_LEVEL', 'INFO')
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import Field
 from word_document_server.tools import (
     document_tools,
     content_tools,
@@ -28,6 +30,21 @@ from word_document_server.tools import (
 )
 from word_document_server.tools.content_tools import replace_paragraph_block_below_header_tool
 from word_document_server.tools.content_tools import replace_block_between_manual_anchors_tool
+
+MARKDOWN_REPLACE_MODE_VALUES = [
+    "auto",
+    "exact_restore",
+    "editable_rebuild",
+    "editable_rebuild_with_template",
+]
+MarkdownReplaceMode = Annotated[
+    str,
+    Field(
+        json_schema_extra={
+            "enum": MARKDOWN_REPLACE_MODE_VALUES,
+        }
+    ),
+]
 
 def get_transport_config():
     """
@@ -167,32 +184,43 @@ def register_tools():
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Get Document Markdown",
-            readOnlyHint=True,
         ),
     )
-    def get_document_markdown(filename: str):
+    def get_document_markdown(filename: str, include_fidelity_bundle: bool = True):
         """Return a markdown view of the document for diffing and review.
 
-        The markdown starts with a wadocx:fidelity-bundle comment containing the
-        original DOCX bytes for exact restore through replace_document_with_markdown.
-        Embedded images are exported to a sibling *_media directory and referenced
-        with markdown image links.
+        When include_fidelity_bundle is true, the markdown starts with a
+        wadocx:fidelity-bundle comment containing the original DOCX bytes for
+        exact restore through replace_document_with_markdown. Set it false for
+        editable markdown export without exact-restore bytes. Embedded images are
+        exported to a sibling *_media directory and referenced with markdown image
+        links.
         """
-        return markdown_tools.get_document_markdown(filename)
+        return markdown_tools.get_document_markdown(filename, include_fidelity_bundle)
 
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Export Document Markdown",
         ),
     )
-    def export_document_markdown(filename: str, output_filename: str = None):
+    def export_document_markdown(
+        filename: str,
+        output_filename: str = None,
+        include_fidelity_bundle: bool = True,
+    ):
         """Export the document as markdown to a file.
 
-        The exported markdown includes a wadocx:fidelity-bundle comment for
-        byte-for-byte DOCX restoration. Embedded images are written to a sibling
-        *_media directory and referenced with markdown image links.
+        When include_fidelity_bundle is true, the exported markdown includes a
+        wadocx:fidelity-bundle comment for byte-for-byte DOCX restoration. Set it
+        false for editable markdown export without exact-restore bytes. Embedded
+        images are written to a sibling *_media directory and referenced with
+        markdown image links.
         """
-        return markdown_tools.export_document_markdown_to_file(filename, output_filename)
+        return markdown_tools.export_document_markdown_to_file(
+            filename,
+            output_filename,
+            include_fidelity_bundle,
+        )
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -200,12 +228,18 @@ def register_tools():
             destructiveHint=True,
         ),
     )
-    def replace_document_with_markdown(filename: str, markdown_text: str):
+    def replace_document_with_markdown(
+        filename: str,
+        markdown_text: str,
+        mode: MarkdownReplaceMode = "auto",
+        source_base_dir: str = None,
+    ):
         """Replace the document body with markdown-rendered content.
 
         Supported markdown includes headings (# through ######), paragraphs,
         bullet and numbered lists, tables, local images, alignment blocks
-        (<div align="left|center|right|justify">), and <!-- PAGE BREAK -->.
+        (<div align="left|center|right|justify">), <!-- PAGE BREAK -->, and
+        <!-- SECTION BREAK --> for template section boundaries.
 
         Native Word TOC fields can be inserted with:
         <!-- TOC -->
@@ -220,11 +254,55 @@ def register_tools():
         page_numbers/plain (page numbers without dotted leaders), links/web
         (hyperlinked entries without page numbers).
 
-        If markdown_text begins with a wadocx:fidelity-bundle exported by
-        get_document_markdown/export_document_markdown, this restores the exact
-        original DOCX bytes instead of rebuilding editable markdown.
+        Template-preserving rebuild can be requested with:
+        <!-- wadocx:base-template-md
+        path: C:\\path\\to\\template-export.md
+        -->
+        The referenced template markdown must include a wadocx:fidelity-bundle,
+        which is produced by the default markdown export mode.
+
+        mode controls fidelity-bundle behavior:
+        - auto: restore exactly when a bundle is present, otherwise rebuild.
+        - exact_restore: require a bundle and restore exact DOCX bytes.
+        - editable_rebuild: ignore any leading bundle and rebuild content.
+        - editable_rebuild_with_template: use a leading bundle as the template,
+          then rebuild the editable markdown body.
+
+        source_base_dir resolves relative image and base-template paths. Prefer
+        replace_document_with_markdown_file for file-backed markdown drafts.
         """
-        return markdown_tools.replace_document_with_markdown(filename, markdown_text)
+        return markdown_tools.replace_document_with_markdown(
+            filename,
+            markdown_text,
+            mode,
+            source_base_dir,
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Replace Document With Markdown File",
+            destructiveHint=True,
+        ),
+    )
+    def replace_document_with_markdown_file(
+        filename: str,
+        markdown_path: str,
+        mode: MarkdownReplaceMode = "auto",
+    ):
+        """Replace a document using markdown read from a file.
+
+        This is the preferred one-call path for file-backed Markdown drafts.
+        Relative markdown image paths and wadocx:base-template-md paths are
+        resolved against the markdown file's directory.
+
+        mode supports auto, exact_restore, editable_rebuild, and
+        editable_rebuild_with_template.
+        """
+        return markdown_tools.replace_document_with_markdown_file(
+            filename,
+            markdown_path,
+            mode,
+        )
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -237,8 +315,9 @@ def register_tools():
 
         Supports the editable markdown blocks accepted by
         replace_document_with_markdown, including headings, paragraphs, lists,
-        tables, images, alignment blocks, <!-- PAGE BREAK -->, and native Word
-        TOC directives such as <!-- TOC --> or <!-- wadocx:toc ... -->.
+        tables, images, alignment blocks, <!-- PAGE BREAK -->,
+        <!-- SECTION BREAK -->, and native Word TOC directives such as
+        <!-- TOC --> or <!-- wadocx:toc ... -->.
         Fidelity bundles are intentionally rejected for section replacement;
         use replace_document_with_markdown for exact whole-DOCX restoration.
         """
@@ -251,7 +330,12 @@ def register_tools():
         ),
     )
     def compile_iso_template_draft(markdown_path: str, template_docx_path: str, output_docx_path: str):
-        """Compile a markdown draft into an ISO-style Word template document."""
+        """Compile a markdown draft into an ISO-style Word template document.
+
+        Use this dedicated file-based one-call path when a markdown draft must be
+        applied to an ISO template DOCX while preserving template front matter,
+        sections, headers, footers, and body styles.
+        """
         return iso_template_tools.compile_iso_template_draft(markdown_path, template_docx_path, output_docx_path)
     
     @mcp.tool(
