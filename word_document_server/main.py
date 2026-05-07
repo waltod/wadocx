@@ -171,7 +171,13 @@ def register_tools():
         ),
     )
     def get_document_markdown(filename: str):
-        """Return a markdown view of the document for diffing and review."""
+        """Return a markdown view of the document for diffing and review.
+
+        The markdown starts with a wadocx:fidelity-bundle comment containing the
+        original DOCX bytes for exact restore through replace_document_with_markdown.
+        Embedded images are exported to a sibling *_media directory and referenced
+        with markdown image links.
+        """
         return markdown_tools.get_document_markdown(filename)
 
     @mcp.tool(
@@ -180,7 +186,12 @@ def register_tools():
         ),
     )
     def export_document_markdown(filename: str, output_filename: str = None):
-        """Export the document as markdown to a file."""
+        """Export the document as markdown to a file.
+
+        The exported markdown includes a wadocx:fidelity-bundle comment for
+        byte-for-byte DOCX restoration. Embedded images are written to a sibling
+        *_media directory and referenced with markdown image links.
+        """
         return markdown_tools.export_document_markdown_to_file(filename, output_filename)
 
     @mcp.tool(
@@ -190,7 +201,25 @@ def register_tools():
         ),
     )
     def replace_document_with_markdown(filename: str, markdown_text: str):
-        """Replace the document body with markdown-rendered content."""
+        """Replace the document body with markdown-rendered content.
+
+        Supported markdown includes headings (# through ######), paragraphs,
+        bullet and numbered lists, tables, local images, alignment blocks
+        (<div align="left|center|right|justify">), and <!-- PAGE BREAK -->.
+
+        Native Word TOC fields can be inserted with:
+        <!-- TOC -->
+        or:
+        <!-- wadocx:toc
+        title: Contents
+        max_level: 3
+        page_break_after: true
+        -->
+
+        If markdown_text begins with a wadocx:fidelity-bundle exported by
+        get_document_markdown/export_document_markdown, this restores the exact
+        original DOCX bytes instead of rebuilding editable markdown.
+        """
         return markdown_tools.replace_document_with_markdown(filename, markdown_text)
 
     @mcp.tool(
@@ -200,7 +229,15 @@ def register_tools():
         ),
     )
     def replace_section_with_markdown(filename: str, header_text: str, markdown_text: str):
-        """Replace the body below a heading using markdown-rendered content."""
+        """Replace the body below a heading using markdown-rendered content.
+
+        Supports the editable markdown blocks accepted by
+        replace_document_with_markdown, including headings, paragraphs, lists,
+        tables, images, alignment blocks, <!-- PAGE BREAK -->, and native Word
+        TOC directives such as <!-- TOC --> or <!-- wadocx:toc ... -->.
+        Fidelity bundles are intentionally rejected for section replacement;
+        use replace_document_with_markdown for exact whole-DOCX restoration.
+        """
         return markdown_tools.replace_section_with_markdown(filename, header_text, markdown_text)
 
     @mcp.tool(

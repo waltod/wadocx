@@ -14,13 +14,23 @@ from word_document_server.utils.markdown_utils import (
 
 
 async def get_document_markdown(filename: str) -> str:
-    """Return the document as markdown for review, diffing, or draft edits."""
+    """Return markdown for review, diffing, draft edits, or exact restoration.
+
+    The returned markdown starts with a wadocx:fidelity-bundle comment that can
+    restore the exact DOCX bytes through replace_document_with_markdown. Embedded
+    images are exported to a sibling *_media directory and referenced as markdown
+    image links.
+    """
     filename = ensure_docx_extension(filename)
     return document_to_markdown(filename)
 
 
 async def export_document_markdown_to_file(filename: str, output_filename: Optional[str] = None) -> str:
-    """Export the document to a markdown file and return the output path."""
+    """Export markdown to a file and return the output path.
+
+    The file includes a wadocx:fidelity-bundle for byte-for-byte DOCX restore.
+    Embedded images are exported to a sibling *_media directory.
+    """
     filename = ensure_docx_extension(filename)
 
     if not os.path.exists(filename):
@@ -36,7 +46,24 @@ async def export_document_markdown_to_file(filename: str, output_filename: Optio
 
 
 async def replace_document_with_markdown(filename: str, markdown_text: str) -> str:
-    """Replace the document body with markdown-rendered content."""
+    """Replace the document body with markdown-rendered content.
+
+    Supported editable markdown:
+    - Headings (# through ######), paragraphs, bullet lists, numbered lists,
+      tables, and local markdown images.
+    - Alignment blocks: <div align="left|center|right|justify"> ... </div>.
+    - Page breaks: <!-- PAGE BREAK -->.
+    - Native Word table-of-contents fields: <!-- TOC -->.
+    - Configured TOC fields:
+      <!-- wadocx:toc
+      title: Contents
+      max_level: 3
+      page_break_after: true
+      -->
+
+    If markdown_text begins with a wadocx:fidelity-bundle exported by wadocx,
+    the original DOCX bytes are restored exactly instead of rebuilding content.
+    """
     filename = ensure_docx_extension(filename)
 
     is_writeable, error_message = check_file_writeable(filename)
@@ -56,7 +83,12 @@ async def replace_document_with_markdown(filename: str, markdown_text: str) -> s
 
 
 async def replace_section_with_markdown(filename: str, header_text: str, markdown_text: str) -> str:
-    """Replace the content below a section heading using markdown-rendered blocks."""
+    """Replace content below a section heading using markdown-rendered blocks.
+
+    Supports the same editable markdown blocks as replace_document_with_markdown,
+    including <!-- TOC --> and configured wadocx:toc directives. Fidelity bundles
+    are rejected here because exact restore is only valid for whole documents.
+    """
     filename = ensure_docx_extension(filename)
 
     if not os.path.exists(filename):

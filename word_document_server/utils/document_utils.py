@@ -632,7 +632,7 @@ def insert_content_blocks_after_element(
     """
     Insert parsed content blocks after an anchor element.
 
-    Supported block types: paragraph, heading, list, table, image, toc.
+    Supported block types: paragraph, heading, list, table, image, page_break, toc.
     Returns the number of body elements inserted.
     """
     current_element = anchor_element
@@ -659,6 +659,14 @@ def insert_content_blocks_after_element(
                 add_page_break_after=bool(block.get("add_page_break_after")),
             )
             inserted += added
+            continue
+
+        if block_type == "page_break":
+            new_para = doc.add_paragraph("")
+            new_para.add_run().add_break(WD_BREAK.PAGE)
+            current_element.addnext(new_para._element)
+            current_element = new_para._element
+            inserted += 1
             continue
 
         if block_type == "list":
