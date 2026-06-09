@@ -8,12 +8,12 @@ import os
 from typing import List, Optional, Dict, Any
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_TAB_ALIGNMENT, WD_TAB_LEADER
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension
-from word_document_server.utils.document_utils import find_and_replace_text, insert_header_near_text, insert_numbered_list_near_text, insert_line_or_paragraph_near_text, replace_paragraph_block_below_header, replace_block_between_manual_anchors, build_toc_instruction
+from word_document_server.utils.document_utils import find_and_replace_text, insert_header_near_text, insert_numbered_list_near_text, insert_line_or_paragraph_near_text, replace_paragraph_block_below_header, replace_block_between_manual_anchors, build_toc_instruction, normalize_hex_color
 from word_document_server.core.styles import ensure_heading_style, ensure_table_style
 
 
@@ -34,8 +34,9 @@ def _apply_run_formatting(
         run.font.bold = bold
     if italic is not None:
         run.font.italic = italic
-    if color:
-        run.font.color.rgb = RGBColor.from_string(color.lstrip('#'))
+    normalized = normalize_hex_color(color)
+    if normalized:
+        run.font.color.rgb = RGBColor.from_string(normalized)
 
 
 def _set_paragraph_alignment(paragraph, alignment: Optional[str]) -> None:
@@ -98,9 +99,10 @@ def _set_run_properties(run_element, font_name=None, font_size=None, bold=None, 
         rpr.append(OxmlElement("w:b"))
     if italic is True:
         rpr.append(OxmlElement("w:i"))
-    if color:
+    normalized_color = normalize_hex_color(color)
+    if normalized_color:
         color_el = OxmlElement("w:color")
-        color_el.set(qn("w:val"), color.lstrip("#"))
+        color_el.set(qn("w:val"), normalized_color)
         rpr.append(color_el)
     run_element.append(rpr)
 
@@ -154,6 +156,190 @@ def _append_field_code_run(
 def _insert_paragraph_before(paragraph, reference_element) -> None:
     """Move a paragraph before a given body element."""
     reference_element.addprevious(paragraph._element)
+
+
+def _collect_toc_headings(doc, max_level: int):
+    """Return [(paragraph, level, text)] for heading paragraphs up to max_level."""
+    headings = []
+    for paragraph in doc.paragraphs:
+        style = paragraph.style
+        name = style.name if style else ""
+        if not name or not name.startswith("Heading "):
+            continue
+        try:
+            level = int(name.split(" ")[1])
+        except (ValueError, IndexError):
+            continue
+        text = paragraph.text.strip()
+        if level <= max_level and text:
+            headings.append((paragraph, level, text))
+    return headings
+
+
+def _ensure_heading_bookmark(paragraph, name: str, bookmark_id: int) -> None:
+    """Wrap a paragraph's content in a Word bookmark (idempotent by name)."""
+    p = paragraph._p
+    # Skip if a bookmark with this name already exists on the paragraph.
+    for existing in p.findall(qn("w:bookmarkStart")):
+        if existing.get(qn("w:name")) == name:
+            return
+    start = OxmlElement("w:bookmarkStart")
+    start.set(qn("w:id"), str(bookmark_id))
+    start.set(qn("w:name"), name)
+    end = OxmlElement("w:bookmarkEnd")
+    end.set(qn("w:id"), str(bookmark_id))
+    # Insert start after the paragraph properties (if any), end at the very end.
+    ppr = p.find(qn("w:pPr"))
+    if ppr is not None:
+        ppr.addnext(start)
+    else:
+        p.insert(0, start)
+    p.append(end)
+
+
+def _pageref_field_elements(bookmark_name: str):
+    """Build the run elements for a ``PAGEREF`` field referencing a bookmark."""
+    elements = []
+
+    begin = OxmlElement("w:r")
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    begin.append(fld_begin)
+    elements.append(begin)
+
+    instr_run = OxmlElement("w:r")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = f" PAGEREF {bookmark_name} \\h "
+    instr_run.append(instr)
+    elements.append(instr_run)
+
+    sep = OxmlElement("w:r")
+    fld_sep = OxmlElement("w:fldChar")
+    fld_sep.set(qn("w:fldCharType"), "separate")
+    sep.append(fld_sep)
+    elements.append(sep)
+
+    num_run = OxmlElement("w:r")
+    num_t = OxmlElement("w:t")
+    num_t.text = "1"
+    num_run.append(num_t)
+    elements.append(num_run)
+
+    end = OxmlElement("w:r")
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    end.append(fld_end)
+    elements.append(end)
+
+    return elements
+
+
+def _build_toc_entry_paragraph(doc, text: str, level: int, bookmark_name: str):
+    """Create a populated TOC entry paragraph (hyperlink + tab + PAGEREF)."""
+    para = doc.add_paragraph()
+    style_applied = False
+    try:
+        para.style = f"TOC {level}"
+        style_applied = True
+    except KeyError:
+        pass
+
+    if not style_applied:
+        # Fallback for documents whose template lacks built-in "TOC n" styles:
+        # indent by level and add a right-aligned tab stop with a dotted leader
+        # so the page number sits flush-right with classic TOC dot leaders.
+        fmt = para.paragraph_format
+        fmt.left_indent = Inches(0.25 * (level - 1))
+        try:
+            fmt.tab_stops.add_tab_stop(
+                Inches(6.0), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS
+            )
+        except Exception:
+            pass
+
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("w:anchor"), bookmark_name)
+    hyperlink.set(qn("w:history"), "1")
+
+    text_run = OxmlElement("w:r")
+    text_el = OxmlElement("w:t")
+    text_el.set(qn("xml:space"), "preserve")
+    text_el.text = text
+    text_run.append(text_el)
+    hyperlink.append(text_run)
+
+    tab_run = OxmlElement("w:r")
+    tab_run.append(OxmlElement("w:tab"))
+    hyperlink.append(tab_run)
+
+    for element in _pageref_field_elements(bookmark_name):
+        hyperlink.append(element)
+
+    para._p.append(hyperlink)
+    return para
+
+
+def _prepend_field_open_runs(paragraph, instruction: str) -> None:
+    """Insert TOC field-begin/instr/separate runs at the start of a paragraph."""
+    p = paragraph._p
+    anchor = p.find(qn("w:pPr"))
+
+    sep_run = OxmlElement("w:r")
+    fld_sep = OxmlElement("w:fldChar")
+    fld_sep.set(qn("w:fldCharType"), "separate")
+    sep_run.append(fld_sep)
+
+    instr_run = OxmlElement("w:r")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = f" {instruction} "
+    instr_run.append(instr)
+
+    begin_run = OxmlElement("w:r")
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    fld_begin.set(qn("w:dirty"), "true")
+    begin_run.append(fld_begin)
+
+    # Insert in order: begin, instr, separate (each after pPr / at index 0).
+    if anchor is not None:
+        anchor.addnext(sep_run)
+        anchor.addnext(instr_run)
+        anchor.addnext(begin_run)
+    else:
+        p.insert(0, sep_run)
+        p.insert(0, instr_run)
+        p.insert(0, begin_run)
+
+
+def _append_field_end_run(paragraph) -> None:
+    """Append a field-end run to a paragraph (closes the TOC field)."""
+    end_run = OxmlElement("w:r")
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    end_run.append(fld_end)
+    paragraph._p.append(end_run)
+
+
+def _build_prerendered_toc(doc, headings, instruction: str):
+    """Build a fully populated TOC whose field result contains live entries.
+
+    Each heading is bookmarked and represented by a TOC entry paragraph that
+    Word will refresh, but which already renders correctly in viewers that do
+    not execute field updates. Returns the list of created entry paragraphs in
+    document order (first carries the field-begin runs, last the field-end).
+    """
+    base_id = _get_bookmark_id(doc)
+    entry_paras = []
+    for offset, (heading_para, level, text) in enumerate(headings):
+        bookmark_name = f"_Toc_wadocx_{base_id + offset}"
+        _ensure_heading_bookmark(heading_para, bookmark_name, base_id + offset)
+        entry_paras.append(_build_toc_entry_paragraph(doc, text, level, bookmark_name))
+
+    _prepend_field_open_runs(entry_paras[0], instruction)
+    _append_field_end_run(entry_paras[-1])
+    return entry_paras
 
 
 def _get_bookmark_id(doc) -> int:
@@ -671,8 +857,16 @@ async def add_live_table_of_contents(
     insert_at_start: bool = True,
     add_page_break_after: bool = False,
     toc_style: str = "dotted",
+    prerender: bool = True,
 ) -> str:
-    """Insert a native Word TOC field that can be refreshed in Word."""
+    """Insert a native Word TOC field that can be refreshed in Word.
+
+    When ``prerender`` is True (default) and the document already contains
+    headings, the TOC field result is populated with live entries (hyperlink +
+    tab + PAGEREF page number) so the TOC is visible immediately — including in
+    viewers that do not execute field updates (LibreOffice/headless PDF export,
+    Google Docs preview). Word still refreshes the page numbers on open.
+    """
     filename = ensure_docx_extension(filename)
 
     if not os.path.exists(filename):
@@ -690,6 +884,7 @@ async def add_live_table_of_contents(
     try:
         doc = Document(filename)
         _ensure_update_fields_on_open(doc)
+        instruction = build_toc_instruction(max_level=max_level, toc_style=toc_style)
 
         toc_title_para = doc.add_paragraph(title) if title else None
         if toc_title_para is not None and title:
@@ -699,13 +894,21 @@ async def add_live_table_of_contents(
                 if toc_title_para.runs:
                     toc_title_para.runs[0].bold = True
 
-        toc_para = doc.add_paragraph()
-        instruction = build_toc_instruction(max_level=max_level, toc_style=toc_style)
-        _append_field_code_run(
-            toc_para,
-            instruction,
-            display_text="Right-click to update field.",
-        )
+        headings = _collect_toc_headings(doc, max_level) if prerender else []
+        entry_count = len(headings)
+
+        if headings:
+            # Populated TOC: one paragraph per heading, wrapped as a field.
+            toc_paras = _build_prerendered_toc(doc, headings, instruction)
+        else:
+            # Empty/placeholder TOC field (no headings yet, or prerender disabled).
+            toc_para = doc.add_paragraph()
+            _append_field_code_run(
+                toc_para,
+                instruction,
+                display_text="Right-click to update field.",
+            )
+            toc_paras = [toc_para]
 
         if add_page_break_after:
             page_break_para = doc.add_paragraph()
@@ -715,12 +918,23 @@ async def add_live_table_of_contents(
 
         if insert_at_start and doc.paragraphs:
             first_element = doc.paragraphs[0]._element
-            ordered = [item for item in [page_break_para, toc_para, toc_title_para] if item is not None]
-            for para in reversed(ordered):
+            ordered = [item for item in [toc_title_para, *toc_paras, page_break_para] if item is not None]
+            # addprevious keeps insertion order, so iterate in visual order.
+            for para in ordered:
                 _insert_paragraph_before(para, first_element)
 
         doc.save(filename)
-        return f"Live table of contents inserted into {filename} ({toc_style})."
+        if entry_count:
+            return (
+                f"Live table of contents with {entry_count} entr"
+                f"{'y' if entry_count == 1 else 'ies'} inserted into {filename} "
+                f"({toc_style}, pre-rendered)."
+            )
+        return (
+            f"Live table of contents field inserted into {filename} ({toc_style}). "
+            f"No headings found yet — it will populate when you add Heading-styled "
+            f"paragraphs and refresh the field in Word."
+        )
     except Exception as e:
         return f"Failed to insert live table of contents: {str(e)}"
 
@@ -984,75 +1198,22 @@ async def add_table_of_contents(filename: str, title: str = "Table of Contents",
     if not is_writeable:
         return f"Cannot modify document: {error_message}. Consider creating a copy first."
     
-    try:
-        # Ensure max_level is within valid range
-        max_level = max(1, min(max_level, 9))
-        
-        doc = Document(filename)
-        
-        # Collect headings and their positions
-        headings = []
-        for i, paragraph in enumerate(doc.paragraphs):
-            # Check if paragraph style is a heading
-            if paragraph.style and paragraph.style.name.startswith('Heading '):
-                try:
-                    # Extract heading level from style name
-                    level = int(paragraph.style.name.split(' ')[1])
-                    if level <= max_level:
-                        headings.append({
-                            'level': level,
-                            'text': paragraph.text,
-                            'position': i
-                        })
-                except (ValueError, IndexError):
-                    # Skip if heading level can't be determined
-                    pass
-        
-        if not headings:
-            return f"No headings found in document {filename}. Table of contents not created."
-        
-        # Create a new document with the TOC
-        toc_doc = Document()
-        
-        # Add title
-        if title:
-            toc_doc.add_heading(title, level=1)
-        
-        # Add TOC entries
-        for heading in headings:
-            # Indent based on level (using tab characters)
-            indent = '    ' * (heading['level'] - 1)
-            toc_doc.add_paragraph(f"{indent}{heading['text']}")
-        
-        # Add page break
-        toc_doc.add_page_break()
-        
-        # Get content from original document
-        for paragraph in doc.paragraphs:
-            p = toc_doc.add_paragraph(paragraph.text)
-            # Copy style if possible
-            try:
-                if paragraph.style:
-                    p.style = paragraph.style.name
-            except:
-                pass
-        
-        # Copy tables
-        for table in doc.tables:
-            # Create a new table with the same dimensions
-            new_table = toc_doc.add_table(rows=len(table.rows), cols=len(table.columns))
-            # Copy cell contents
-            for i, row in enumerate(table.rows):
-                for j, cell in enumerate(row.cells):
-                    for paragraph in cell.paragraphs:
-                        new_table.cell(i, j).text = paragraph.text
-        
-        # Save the new document with TOC
-        toc_doc.save(filename)
-        
-        return f"Table of contents with {len(headings)} entries added to {filename}"
-    except Exception as e:
-        return f"Failed to add table of contents: {str(e)}"
+    # Delegate to the native, non-destructive live-TOC implementation.
+    #
+    # The previous implementation rebuilt the entire document from scratch by
+    # copying only ``paragraph.text`` into a brand-new ``Document()``. That
+    # destroyed all run formatting, images, hyperlinks, headers/footers,
+    # sections and footnotes, duplicated every heading, and moved all tables to
+    # the end of the file. Inserting a genuine Word TOC field in place preserves
+    # the document and produces a TOC that Word can refresh.
+    return await add_live_table_of_contents(
+        filename=filename,
+        title=title,
+        max_level=max_level,
+        insert_at_start=True,
+        add_page_break_after=True,
+        toc_style="dotted",
+    )
 
 
 async def delete_paragraph(filename: str, paragraph_index: int) -> str:
@@ -1143,3 +1304,444 @@ async def replace_block_between_manual_anchors_tool(filename: str, start_anchor_
     """Replace all content between start_anchor_text and end_anchor_text (or next logical header if not provided)."""
     return replace_block_between_manual_anchors(filename, start_anchor_text, new_paragraphs, end_anchor_text, match_fn, new_paragraph_style)
 
+
+
+# ---------------------------------------------------------------------------
+# New tools: external hyperlinks, statistics, page setup, captions / figures
+# ---------------------------------------------------------------------------
+
+async def add_hyperlink(
+    filename: str,
+    url: str,
+    text: Optional[str] = None,
+    paragraph_index: Optional[int] = None,
+    color: Optional[str] = "0563C1",
+    underline: bool = True,
+) -> str:
+    """Insert a clickable external hyperlink into a Word document.
+
+    Args:
+        filename: Path to the Word document.
+        url: The destination URL (e.g. https://example.com).
+        text: Visible link text (defaults to the URL).
+        paragraph_index: Append the link to this existing paragraph. If omitted,
+            a new paragraph is added at the end of the document.
+        color: Hex color for the link text (default Word hyperlink blue).
+        underline: Whether to underline the link text.
+    """
+    filename = ensure_docx_extension(filename)
+    if not os.path.exists(filename):
+        return f"Document {filename} does not exist"
+
+    is_writeable, error_message = check_file_writeable(filename)
+    if not is_writeable:
+        return f"Cannot modify document: {error_message}. Consider creating a copy first."
+
+    if not url or not str(url).strip():
+        return "Invalid parameter: url must not be empty."
+
+    try:
+        normalized_color = normalize_hex_color(color)
+    except ValueError as exc:
+        return str(exc)
+
+    try:
+        from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+        doc = Document(filename)
+        link_text = text if text else url
+
+        if paragraph_index is not None:
+            if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+                return (
+                    f"Invalid paragraph index. Document has {len(doc.paragraphs)} "
+                    f"paragraphs (0-{len(doc.paragraphs) - 1})."
+                )
+            paragraph = doc.paragraphs[paragraph_index]
+        else:
+            paragraph = doc.add_paragraph()
+
+        part = paragraph.part
+        r_id = part.relate_to(url, RT.HYPERLINK, is_external=True)
+
+        hyperlink = OxmlElement("w:hyperlink")
+        hyperlink.set(qn("r:id"), r_id)
+        hyperlink.set(qn("w:history"), "1")
+
+        new_run = OxmlElement("w:r")
+        rpr = OxmlElement("w:rPr")
+        rstyle = OxmlElement("w:rStyle")
+        rstyle.set(qn("w:val"), "Hyperlink")
+        rpr.append(rstyle)
+        if normalized_color:
+            color_el = OxmlElement("w:color")
+            color_el.set(qn("w:val"), normalized_color)
+            rpr.append(color_el)
+        if underline:
+            u_el = OxmlElement("w:u")
+            u_el.set(qn("w:val"), "single")
+            rpr.append(u_el)
+        new_run.append(rpr)
+
+        text_el = OxmlElement("w:t")
+        text_el.set(qn("xml:space"), "preserve")
+        text_el.text = link_text
+        new_run.append(text_el)
+        hyperlink.append(new_run)
+
+        paragraph._p.append(hyperlink)
+        doc.save(filename)
+        return f"Hyperlink to {url} added to {filename}."
+    except Exception as e:
+        return f"Failed to add hyperlink: {str(e)}"
+
+
+async def get_document_statistics(filename: str) -> str:
+    """Return word/character/structure statistics for a Word document as JSON.
+
+    Counts words, characters (with and without spaces), paragraphs, headings (by
+    level), tables, images, footnotes, hyperlinks, sections, and a rough page
+    estimate.
+    """
+    import json as _json
+
+    filename = ensure_docx_extension(filename)
+    if not os.path.exists(filename):
+        return f"Document {filename} does not exist"
+
+    try:
+        doc = Document(filename)
+
+        words = 0
+        chars_no_spaces = 0
+        chars_with_spaces = 0
+        paragraph_count = 0
+        empty_paragraphs = 0
+        headings_by_level: Dict[str, int] = {}
+
+        def _tally(text: str) -> None:
+            nonlocal words, chars_no_spaces, chars_with_spaces
+            words += len(text.split())
+            chars_with_spaces += len(text)
+            chars_no_spaces += len(text.replace(" ", "").replace("\t", ""))
+
+        for paragraph in doc.paragraphs:
+            paragraph_count += 1
+            text = paragraph.text
+            if not text.strip():
+                empty_paragraphs += 1
+            _tally(text)
+            style_name = paragraph.style.name if paragraph.style else ""
+            if style_name.startswith("Heading "):
+                headings_by_level[style_name] = headings_by_level.get(style_name, 0) + 1
+
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        _tally(paragraph.text)
+
+        body_xml = doc.element.body
+        image_count = len(body_xml.findall(".//" + qn("w:drawing")))
+        hyperlink_count = len(body_xml.findall(".//" + qn("w:hyperlink")))
+
+        footnote_count = 0
+        try:
+            for rel in doc.part.rels.values():
+                if "footnotes" in rel.reltype:
+                    fn_part = rel.target_part
+                    fn_root = getattr(fn_part, "_element", None)
+                    if fn_root is not None:
+                        notes = fn_root.findall(qn("w:footnote"))
+                        footnote_count = max(0, len(notes) - 2)
+                    break
+        except Exception:
+            footnote_count = 0
+
+        stats = {
+            "filename": filename,
+            "words": words,
+            "characters_with_spaces": chars_with_spaces,
+            "characters_no_spaces": chars_no_spaces,
+            "paragraphs": paragraph_count,
+            "non_empty_paragraphs": paragraph_count - empty_paragraphs,
+            "headings": sum(headings_by_level.values()),
+            "headings_by_level": headings_by_level,
+            "tables": len(doc.tables),
+            "images": image_count,
+            "hyperlinks": hyperlink_count,
+            "footnotes": footnote_count,
+            "sections": len(doc.sections),
+            "estimated_pages": max(1, round(words / 500)) if words else 0,
+        }
+        return _json.dumps(stats, indent=2)
+    except Exception as e:
+        return f"Failed to compute document statistics: {str(e)}"
+
+
+async def set_page_setup(
+    filename: str,
+    section_index: Optional[int] = None,
+    orientation: Optional[str] = None,
+    page_size: Optional[str] = None,
+    margin_top: Optional[float] = None,
+    margin_bottom: Optional[float] = None,
+    margin_left: Optional[float] = None,
+    margin_right: Optional[float] = None,
+    units: str = "inches",
+) -> str:
+    """Configure page orientation, size and margins for one or all sections.
+
+    Args:
+        filename: Path to the Word document.
+        section_index: Section to modify. If omitted, applies to all sections.
+        orientation: 'portrait' or 'landscape'.
+        page_size: 'letter', 'legal', 'a4', or 'a3'.
+        margin_top/bottom/left/right: Margin sizes in ``units``.
+        units: 'inches' (default) or 'cm'.
+    """
+    from docx.enum.section import WD_ORIENT
+    from docx.shared import Inches, Cm
+
+    filename = ensure_docx_extension(filename)
+    if not os.path.exists(filename):
+        return f"Document {filename} does not exist"
+
+    is_writeable, error_message = check_file_writeable(filename)
+    if not is_writeable:
+        return f"Cannot modify document: {error_message}. Consider creating a copy first."
+
+    unit = (units or "inches").lower()
+    if unit not in {"inches", "cm"}:
+        return "Invalid units. Use 'inches' or 'cm'."
+    length = Inches if unit == "inches" else Cm
+
+    page_sizes = {
+        "letter": (8.5, 11.0),
+        "legal": (8.5, 14.0),
+        "a4": (8.27, 11.69),
+        "a3": (11.69, 16.54),
+    }
+
+    try:
+        doc = Document(filename)
+
+        if section_index is not None:
+            if section_index < 0 or section_index >= len(doc.sections):
+                return (
+                    f"Invalid section index. Document has {len(doc.sections)} "
+                    f"section(s) (0-{len(doc.sections) - 1})."
+                )
+            sections = [doc.sections[section_index]]
+        else:
+            sections = list(doc.sections)
+
+        orient = (orientation or "").lower()
+        if orientation and orient not in {"portrait", "landscape"}:
+            return "Invalid orientation. Use 'portrait' or 'landscape'."
+
+        size_key = (page_size or "").lower()
+        if page_size and size_key not in page_sizes:
+            return "Invalid page_size. Use 'letter', 'legal', 'a4', or 'a3'."
+
+        for section in sections:
+            if page_size:
+                w_in, h_in = page_sizes[size_key]
+                section.page_width = Inches(w_in)
+                section.page_height = Inches(h_in)
+            if orientation:
+                if orient == "landscape":
+                    section.orientation = WD_ORIENT.LANDSCAPE
+                    if section.page_width < section.page_height:
+                        section.page_width, section.page_height = (
+                            section.page_height,
+                            section.page_width,
+                        )
+                else:
+                    section.orientation = WD_ORIENT.PORTRAIT
+                    if section.page_width > section.page_height:
+                        section.page_width, section.page_height = (
+                            section.page_height,
+                            section.page_width,
+                        )
+            if margin_top is not None:
+                section.top_margin = length(margin_top)
+            if margin_bottom is not None:
+                section.bottom_margin = length(margin_bottom)
+            if margin_left is not None:
+                section.left_margin = length(margin_left)
+            if margin_right is not None:
+                section.right_margin = length(margin_right)
+
+        doc.save(filename)
+        scope = (
+            f"section {section_index}" if section_index is not None
+            else f"all {len(sections)} section(s)"
+        )
+        return f"Page setup updated for {scope} in {filename}."
+    except Exception as e:
+        return f"Failed to update page setup: {str(e)}"
+
+
+def _append_seq_caption_runs(paragraph, label: str) -> None:
+    """Append '<label> ' + a SEQ field (auto-number) to a caption paragraph."""
+    paragraph.add_run(f"{label} ")
+
+    p = paragraph._p
+    begin_run = OxmlElement("w:r")
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    begin_run.append(fld_begin)
+    p.append(begin_run)
+
+    instr_run = OxmlElement("w:r")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = f" SEQ {label} \\* ARABIC "
+    instr_run.append(instr)
+    p.append(instr_run)
+
+    sep_run = OxmlElement("w:r")
+    fld_sep = OxmlElement("w:fldChar")
+    fld_sep.set(qn("w:fldCharType"), "separate")
+    sep_run.append(fld_sep)
+    p.append(sep_run)
+
+    num_run = OxmlElement("w:r")
+    num_t = OxmlElement("w:t")
+    num_t.text = "1"
+    num_run.append(num_t)
+    p.append(num_run)
+
+    end_run = OxmlElement("w:r")
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    end_run.append(fld_end)
+    p.append(end_run)
+
+
+async def add_caption(
+    filename: str,
+    text: str,
+    label: str = "Figure",
+    paragraph_index: Optional[int] = None,
+    position: str = "after",
+) -> str:
+    """Add an auto-numbered caption (SEQ field) such as 'Figure 1: ...'.
+
+    The caption uses a Word SEQ field so numbering stays correct as captions are
+    added or removed, and can be collected by ``add_table_of_figures``.
+
+    Args:
+        filename: Path to the Word document.
+        text: Caption description (appended after the number).
+        label: Caption label / SEQ category ('Figure', 'Table', 'Equation', ...).
+        paragraph_index: Anchor paragraph (e.g. the image/table paragraph).
+            If omitted the caption is appended at the end of the document.
+        position: 'after' (default) or 'before' the anchor paragraph.
+    """
+    filename = ensure_docx_extension(filename)
+    if not os.path.exists(filename):
+        return f"Document {filename} does not exist"
+
+    is_writeable, error_message = check_file_writeable(filename)
+    if not is_writeable:
+        return f"Cannot modify document: {error_message}. Consider creating a copy first."
+
+    if position not in {"after", "before"}:
+        return "Invalid position. Use 'after' or 'before'."
+
+    try:
+        doc = Document(filename)
+
+        if paragraph_index is not None and (
+            paragraph_index < 0 or paragraph_index >= len(doc.paragraphs)
+        ):
+            return (
+                f"Invalid paragraph index. Document has {len(doc.paragraphs)} "
+                f"paragraphs (0-{len(doc.paragraphs) - 1})."
+            )
+        anchor = (
+            doc.paragraphs[paragraph_index]._element
+            if paragraph_index is not None
+            else None
+        )
+
+        caption_para = doc.add_paragraph()
+        try:
+            caption_para.style = "Caption"
+        except KeyError:
+            pass
+
+        _append_seq_caption_runs(caption_para, label)
+        if text:
+            caption_para.add_run(f": {text}")
+
+        if anchor is not None:
+            if position == "after":
+                anchor.addnext(caption_para._element)
+            else:
+                anchor.addprevious(caption_para._element)
+
+        doc.save(filename)
+        return f"{label} caption added to {filename}."
+    except Exception as e:
+        return f"Failed to add caption: {str(e)}"
+
+
+async def add_table_of_figures(
+    filename: str,
+    label: str = "Figure",
+    title: Optional[str] = "Table of Figures",
+    insert_at_start: bool = False,
+    add_page_break_after: bool = False,
+) -> str:
+    """Insert a native Word Table of Figures field for a caption label.
+
+    Collects all captions created with the matching ``label`` (via SEQ fields)
+    into a refreshable list. Use after adding captions with ``add_caption``.
+    """
+    filename = ensure_docx_extension(filename)
+    if not os.path.exists(filename):
+        return f"Document {filename} does not exist"
+
+    is_writeable, error_message = check_file_writeable(filename)
+    if not is_writeable:
+        return f"Cannot modify document: {error_message}. Consider creating a copy first."
+
+    try:
+        doc = Document(filename)
+        _ensure_update_fields_on_open(doc)
+
+        title_para = doc.add_paragraph(title) if title else None
+        if title_para is not None and title:
+            try:
+                title_para.style = "TOC Heading"
+            except KeyError:
+                if title_para.runs:
+                    title_para.runs[0].bold = True
+
+        tof_para = doc.add_paragraph()
+        instruction = f'TOC \\h \\z \\c "{label}"'
+        _append_field_code_run(
+            tof_para,
+            instruction,
+            display_text="Right-click to update field.",
+        )
+
+        if add_page_break_after:
+            page_break_para = doc.add_paragraph()
+            page_break_para.add_run().add_break(WD_BREAK.PAGE)
+        else:
+            page_break_para = None
+
+        if insert_at_start and doc.paragraphs:
+            first_element = doc.paragraphs[0]._element
+            ordered = [p for p in [title_para, tof_para, page_break_para] if p is not None]
+            for para in ordered:
+                _insert_paragraph_before(para, first_element)
+
+        doc.save(filename)
+        return f"Table of figures (label '{label}') inserted into {filename}."
+    except Exception as e:
+        return f"Failed to insert table of figures: {str(e)}"

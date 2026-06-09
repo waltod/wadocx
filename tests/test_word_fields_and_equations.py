@@ -38,12 +38,33 @@ def test_add_live_table_of_contents_inserts_native_field(tmp_path: Path):
         )
     )
 
-    assert "Live table of contents inserted" in message
+    assert "Live table of contents" in message
+    assert "2 entries" in message
 
     document_xml = _read_zip_part(doc_path, "word/document.xml")
     settings_xml = _read_zip_part(doc_path, "word/settings.xml")
     assert 'TOC \\o "1-3" \\h \\z \\u' in document_xml
     assert "<w:updateFields" in settings_xml
+    # Pre-rendered TOC: headings are bookmarked and entries carry PAGEREF page
+    # numbers so the TOC is visible without a manual field refresh.
+    assert "PAGEREF" in document_xml
+    assert "_Toc_wadocx_" in document_xml
+    assert "<w:hyperlink" in document_xml
+
+
+def test_add_live_table_of_contents_without_headings_is_placeholder(tmp_path: Path):
+    doc_path = tmp_path / "toc-empty.docx"
+    asyncio.run(create_document(str(doc_path), title="Empty TOC"))
+    asyncio.run(add_paragraph(str(doc_path), "Just a paragraph, no headings."))
+
+    message = asyncio.run(
+        add_live_table_of_contents(str(doc_path), title="Contents", max_level=3)
+    )
+
+    assert "No headings found" in message
+    document_xml = _read_zip_part(doc_path, "word/document.xml")
+    assert "Right-click to update field." in document_xml
+    assert 'TOC \\o "1-3" \\h \\z \\u' in document_xml
 
 
 def test_markdown_toc_marker_inserts_native_field(tmp_path: Path):

@@ -4,6 +4,34 @@ A Model Context Protocol (MCP) server for creating, reading, and manipulating Mi
 
 Repository: [https://github.com/waltod/wadocx](https://github.com/waltod/wadocx)
 
+## What's new in 1.3.0
+
+**Bug fixes**
+
+- **Cross-run find & replace.** `search_and_replace` / `find_and_replace_text`
+  now match text that spans multiple runs (the common python-docx case) instead
+  of silently missing it, and preserve the first run's formatting.
+- **Non-destructive `add_table_of_contents`.** The legacy tool used to rebuild
+  the whole document from plain paragraph text — destroying formatting, images,
+  headers/footers, sections and footnotes, and duplicating content. It now
+  inserts a real TOC field in place. It is also exposed as an MCP tool.
+- **Robust color handling.** A shared `normalize_hex_color` helper validates hex
+  codes, expands `#RGB` shorthand, and accepts common color names; invalid
+  colors raise a clear error instead of being silently dropped.
+
+**New features**
+
+- **Pre-rendered live TOC** — headings are bookmarked and the TOC field is
+  populated with hyperlinked entries and `PAGEREF` page numbers, so it renders
+  in viewers that don't run field updates while staying live in Word.
+- **`add_hyperlink`** — insert clickable external URL links.
+- **`get_document_statistics`** — word/character/paragraph/heading/table/image/
+  hyperlink/footnote/section counts plus a page estimate (JSON).
+- **`set_page_setup`** — orientation, page size (Letter/Legal/A4/A3) and margins
+  (inches or cm), per section or document-wide.
+- **`add_caption` + `add_table_of_figures`** — auto-numbered `SEQ` captions for
+  figures/tables and a refreshable Table of Figures field.
+
 ## Overview
 
 WaDocx implements the [Model Context Protocol](https://modelcontextprotocol.io/) to expose Word document operations as tools and resources. It serves as a bridge between AI assistants and Microsoft Word documents, allowing for document creation, content addition, formatting, and analysis.
@@ -324,13 +352,26 @@ replace_section_with_markdown(filename, header_text, markdown_text)
 compile_iso_template_draft(markdown_path, template_docx_path, output_docx_path)
 set_document_header(filename, text, section_index=0, header_type="default", font_name=None, font_size=None, bold=None, italic=None, color=None, alignment=None)
 set_document_footer(filename, text, section_index=0, footer_type="default", font_name=None, font_size=None, bold=None, italic=None, color=None, alignment=None)
-add_live_table_of_contents(filename, title="Contents", max_level=3, insert_at_start=True, add_page_break_after=False, toc_style="dotted")
+add_live_table_of_contents(filename, title="Contents", max_level=3, insert_at_start=True, add_page_break_after=False, toc_style="dotted", prerender=True)
+add_table_of_contents(filename, title="Table of Contents", max_level=3)
+add_table_of_figures(filename, label="Figure", title="Table of Figures", insert_at_start=False, add_page_break_after=False)
 set_document_header_page_number(filename, prefix_text="", suffix_text="", section_index=0, header_type="default", alignment="right", font_name=None, font_size=None, bold=None, italic=None, color=None)
 set_document_footer_page_number(filename, prefix_text="", suffix_text="", section_index=0, footer_type="default", alignment="right", font_name=None, font_size=None, bold=None, italic=None, color=None)
+set_page_setup(filename, section_index=None, orientation=None, page_size=None, margin_top=None, margin_bottom=None, margin_left=None, margin_right=None, units="inches")
+get_document_statistics(filename)
 insert_omml_equation(filename, equation_text, paragraph_index=None, position="after")
 add_bookmark_to_paragraph(filename, paragraph_index, bookmark_name)
 add_internal_hyperlink(filename, paragraph_index, link_text, bookmark_name)
+add_hyperlink(filename, url, text=None, paragraph_index=None, color="0563C1", underline=True)
+add_caption(filename, text, label="Figure", paragraph_index=None, position="after")
 ```
+
+> **Pre-rendered table of contents.** `add_live_table_of_contents` (and the
+> convenience `add_table_of_contents`) now bookmark each heading and populate the
+> TOC field with live entries (hyperlink + `PAGEREF` page number). The TOC is
+> therefore visible immediately — even in viewers that do not execute Word field
+> updates (LibreOffice/headless PDF export, Google Docs preview) — while Word
+> still refreshes page numbers on open. Set `prerender=False` for a bare field.
 
 ### Content Addition
 

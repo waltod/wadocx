@@ -15,6 +15,45 @@ from docx.shared import Inches
 from docx.text.paragraph import Paragraph
 
 
+_NAMED_COLORS = {
+    "black": "000000", "white": "FFFFFF", "red": "FF0000", "green": "008000",
+    "blue": "0000FF", "yellow": "FFFF00", "gray": "808080", "grey": "808080",
+    "purple": "800080", "orange": "FFA500", "navy": "000080", "teal": "008080",
+    "silver": "C0C0C0", "maroon": "800000", "lime": "00FF00", "cyan": "00FFFF",
+    "magenta": "FF00FF", "pink": "FFC0CB", "brown": "A52A2A", "gold": "FFD700",
+}
+
+
+def normalize_hex_color(color: Optional[str]) -> Optional[str]:
+    """Normalize a color into a 6-digit uppercase hex string (no leading '#').
+
+    Accepts ``#RGB``/``RGB`` shorthand (expanded), ``#RRGGBB``/``RRGGBB``, and a
+    set of common color names. Returns ``None`` for empty input and raises
+    ``ValueError`` for malformed values so callers can surface a clear error
+    instead of silently dropping the color.
+    """
+    if color is None or color == "":
+        return None
+    value = str(color).strip()
+    named = _NAMED_COLORS.get(value.lower())
+    if named:
+        return named
+    value = value.lstrip("#").strip()
+    if len(value) == 3:
+        value = "".join(ch * 2 for ch in value)
+    if len(value) != 6:
+        raise ValueError(
+            f"Invalid color '{color}'. Use a 3/6-digit hex code (e.g. 'FF0000') or a color name."
+        )
+    try:
+        int(value, 16)
+    except ValueError:
+        raise ValueError(
+            f"Invalid color '{color}'. '{value}' is not valid hexadecimal."
+        )
+    return value.upper()
+
+
 def apply_block_alignment(paragraph, alignment: Optional[str]) -> None:
     """Apply a simple alignment keyword to a paragraph."""
     if not alignment:
@@ -154,31 +193,76 @@ def find_paragraph_by_text(doc, text, partial_match=False):
     return matching_paragraphs
 
 
+def _replace_in_paragraph(para, old_text, new_text):
+    """Replace every occurrence of ``old_text`` in a paragraph, even when the
+    match spans multiple runs.
+
+    python-docx splits text into runs arbitrarily (spell-check, formatting,
+    autocorrect, etc.), so a search string that is visually contiguous is often
+    distributed across several ``w:r`` elements. The naive per-run replace used
+    previously silently missed those matches. This implementation walks the
+    concatenated run text, locates each match across run boundaries, and rewrites
+    the affected runs while preserving the formatting of the run where the match
+    begins.
+
+    Returns the number of replacements made in this paragraph.
+    """
+    runs = para.runs
+    if not runs:
+        return 0
+
+    full_text = "".join(run.text for run in runs)
+    if old_text not in full_text:
+        return 0
+
+    # Map each character offset in ``full_text`` to its owning run index.
+    run_bounds = []  # (run_index, start_offset, end_offset)
+    offset = 0
+    for idx, run in enumerate(runs):
+        length = len(run.text)
+        run_bounds.append((idx, offset, offset + length))
+        offset += length
+
+    new_full = full_text.replace(old_text, new_text)
+    count = full_text.count(old_text)
+
+    # Rewrite by distributing the new text back onto the existing runs. The first
+    # run receives the whole replacement string (keeping its formatting); the
+    # remaining runs are cleared. This keeps a single, consistently formatted run
+    # for the matched region rather than corrupting the XML.
+    runs[0].text = new_full
+    for run in runs[1:]:
+        run.text = ""
+    return count
+
+
 def find_and_replace_text(doc, old_text, new_text):
     """
     Find and replace text throughout the document, skipping Table of Contents (TOC) paragraphs.
-    
+
+    Handles matches that span multiple runs (the common python-docx case) and
+    preserves the formatting of the first run in each affected paragraph.
+
     Args:
         doc: Document object
         old_text: Text to find
         new_text: Text to replace with
-        
+
     Returns:
         Number of replacements made
     """
+    if not old_text:
+        return 0
+
     count = 0
-    
+
     # Search in paragraphs
     for para in doc.paragraphs:
         # Skip TOC paragraphs
         if para.style and para.style.name.startswith("TOC"):
             continue
-        if old_text in para.text:
-            for run in para.runs:
-                if old_text in run.text:
-                    run.text = run.text.replace(old_text, new_text)
-                    count += 1
-    
+        count += _replace_in_paragraph(para, old_text, new_text)
+
     # Search in tables
     for table in doc.tables:
         for row in table.rows:
@@ -187,12 +271,8 @@ def find_and_replace_text(doc, old_text, new_text):
                     # Skip TOC paragraphs in tables
                     if para.style and para.style.name.startswith("TOC"):
                         continue
-                    if old_text in para.text:
-                        for run in para.runs:
-                            if old_text in run.text:
-                                run.text = run.text.replace(old_text, new_text)
-                                count += 1
-    
+                    count += _replace_in_paragraph(para, old_text, new_text)
+
     return count
 
 

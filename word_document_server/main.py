@@ -450,6 +450,7 @@ def register_tools():
         insert_at_start: bool = True,
         add_page_break_after: bool = False,
         toc_style: str = "dotted",
+        prerender: bool = True,
     ):
         """Insert a native Word TOC field that can be refreshed in Word.
 
@@ -457,9 +458,124 @@ def register_tools():
         - dotted: dotted leaders with page numbers (Word default)
         - page_numbers/plain: page numbers without dotted leaders
         - links/web: hyperlinked entries without page numbers
+
+        When prerender is True (default), existing headings are bookmarked and
+        the TOC is populated with live entries (hyperlink + page number) so it is
+        visible even in viewers that do not run field updates, while Word still
+        refreshes page numbers on open.
         """
         return content_tools.add_live_table_of_contents(
-            filename, title, max_level, insert_at_start, add_page_break_after, toc_style
+            filename, title, max_level, insert_at_start, add_page_break_after,
+            toc_style, prerender
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Add Table Of Contents",
+        ),
+    )
+    def add_table_of_contents(
+        filename: str,
+        title: str = "Table of Contents",
+        max_level: int = 3,
+    ):
+        """Insert a refreshable Word table of contents (in place, non-destructive).
+
+        Builds a native TOC field from the document's heading styles without
+        rebuilding or reformatting the rest of the document.
+        """
+        return content_tools.add_table_of_contents(filename, title, max_level)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Add Hyperlink",
+        ),
+    )
+    def add_hyperlink(
+        filename: str,
+        url: str,
+        text: str = None,
+        paragraph_index: int = None,
+        color: str = "0563C1",
+        underline: bool = True,
+    ):
+        """Insert a clickable external hyperlink into a document."""
+        return content_tools.add_hyperlink(
+            filename, url, text, paragraph_index, color, underline
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Get Document Statistics",
+            readOnlyHint=True,
+        ),
+    )
+    def get_document_statistics(filename: str):
+        """Return word/character/structure statistics for a document as JSON."""
+        return content_tools.get_document_statistics(filename)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Set Page Setup",
+        ),
+    )
+    def set_page_setup(
+        filename: str,
+        section_index: int = None,
+        orientation: str = None,
+        page_size: str = None,
+        margin_top: float = None,
+        margin_bottom: float = None,
+        margin_left: float = None,
+        margin_right: float = None,
+        units: str = "inches",
+    ):
+        """Configure page orientation, size, and margins for one or all sections.
+
+        orientation: 'portrait'|'landscape'; page_size: 'letter'|'legal'|'a4'|'a3';
+        margins in 'inches' (default) or 'cm'.
+        """
+        return content_tools.set_page_setup(
+            filename, section_index, orientation, page_size,
+            margin_top, margin_bottom, margin_left, margin_right, units
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Add Caption",
+        ),
+    )
+    def add_caption(
+        filename: str,
+        text: str,
+        label: str = "Figure",
+        paragraph_index: int = None,
+        position: str = "after",
+    ):
+        """Add an auto-numbered caption (SEQ field), e.g. 'Figure 1: ...'.
+
+        label is the caption category ('Figure', 'Table', 'Equation', ...).
+        position is 'after' (default) or 'before' the anchor paragraph.
+        """
+        return content_tools.add_caption(
+            filename, text, label, paragraph_index, position
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Add Table Of Figures",
+        ),
+    )
+    def add_table_of_figures(
+        filename: str,
+        label: str = "Figure",
+        title: str = "Table of Figures",
+        insert_at_start: bool = False,
+        add_page_break_after: bool = False,
+    ):
+        """Insert a refreshable Word Table of Figures for captions with this label."""
+        return content_tools.add_table_of_figures(
+            filename, label, title, insert_at_start, add_page_break_after
         )
 
     @mcp.tool(
