@@ -213,3 +213,65 @@ async def get_document_xml_tool(filename: str) -> str:
     """Get the raw XML structure of a Word document."""
     return get_document_xml(filename)
 
+
+def _find_soffice() -> Optional[str]:
+    """Locate the LibreOffice/soffice executable across platforms."""
+    import shutil
+
+    for name in ("soffice", "soffice.exe", "libreoffice"):
+        path = shutil.which(name)
+        if path:
+            return path
+    candidates = [
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        "/usr/bin/soffice",
+        "/usr/bin/libreoffice",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+async def convert_doc_to_docx(filename: str, output_dir: Optional[str] = None) -> str:
+    """Convert a legacy ``.doc`` (Word 97-2003) file to ``.docx``.
+
+    Uses LibreOffice headless conversion. Returns the path to the new ``.docx``.
+    Requires LibreOffice to be installed.
+    """
+    import subprocess
+
+    if not os.path.exists(filename):
+        return f"Document {filename} does not exist"
+    if not filename.lower().endswith(".doc"):
+        return "convert_doc_to_docx expects a legacy .doc file."
+
+    soffice = _find_soffice()
+    if not soffice:
+        return (
+            "LibreOffice (soffice) was not found. Install LibreOffice to convert "
+            "legacy .doc files, or open and re-save the file as .docx in Word."
+        )
+
+    out_dir = output_dir or os.path.dirname(os.path.abspath(filename)) or "."
+    try:
+        result = subprocess.run(
+            [soffice, "--headless", "--convert-to", "docx", "--outdir", out_dir, filename],
+            capture_output=True, text=True, timeout=120,
+        )
+        produced = os.path.join(
+            out_dir, os.path.splitext(os.path.basename(filename))[0] + ".docx"
+        )
+        if os.path.exists(produced):
+            return f"Converted {filename} -> {produced}"
+        return (
+            f"Conversion did not produce an output file. soffice output: "
+            f"{result.stdout.strip()} {result.stderr.strip()}"
+        )
+    except subprocess.TimeoutExpired:
+        return "Conversion timed out after 120s."
+    except Exception as e:
+        return f"Failed to convert .doc to .docx: {str(e)}"
+

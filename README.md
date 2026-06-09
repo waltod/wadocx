@@ -4,6 +4,34 @@ A Model Context Protocol (MCP) server for creating, reading, and manipulating Mi
 
 Repository: [https://github.com/waltod/wadocx](https://github.com/waltod/wadocx)
 
+## What's new in 1.4.0 — tracked changes & comment authoring
+
+WaDocx now covers the full **document-review** workflow that previously required
+raw OOXML editing — as typed, validated MCP tools (87 total).
+
+**Tracked changes (revisions)**
+
+- `enable_track_changes` — toggle Word's track-changes mode.
+- `add_tracked_insertion` — add text recorded as an insertion (with author).
+- `mark_text_as_deleted` — mark existing text as a tracked deletion.
+- `tracked_search_and_replace` — replace text as a deletion + insertion redline.
+- `accept_all_changes` / `reject_all_changes` — resolve the whole document.
+- `get_revision_counts` — count pending insertions/deletions.
+
+**Comment authoring**
+
+- `add_comment` — anchor a comment on a phrase or a whole paragraph.
+- `reply_to_comment` — threaded replies (via `commentsExtended.xml`).
+- `resolve_comment` — mark a thread resolved / reopen it.
+
+**Legacy import**
+
+- `convert_doc_to_docx` — convert Word 97–2003 `.doc` files via LibreOffice.
+
+> These close the only gaps versus Anthropic's `docx` skill (tracked changes,
+> comment threads, `.doc` import) — see
+> [docs/COMPARISON_anthropic_docx.md](docs/COMPARISON_anthropic_docx.md).
+
 ## What's new in 1.3.0
 
 **Bug fixes**
@@ -476,6 +504,27 @@ auto_fit_table_columns(filename, table_index)
 get_all_comments(filename)
 get_comments_by_author(filename, author)
 get_comments_for_paragraph(filename, paragraph_index)
+```
+
+### Comment Authoring
+
+```python
+add_comment(filename, comment_text, search_text="", paragraph_index=None, occurrence=1, author="WaDocx", initials="WD")
+reply_to_comment(filename, parent_comment_id, comment_text, author="WaDocx", initials="WD")
+resolve_comment(filename, comment_id, done=True)
+```
+
+### Tracked Changes (Revisions)
+
+```python
+enable_track_changes(filename, enabled=True)
+add_tracked_insertion(filename, text, author="WaDocx", date=None, style=None)
+mark_text_as_deleted(filename, search_text, author="WaDocx", date=None)
+tracked_search_and_replace(filename, find_text, replace_text, author="WaDocx", date=None)
+accept_all_changes(filename)
+reject_all_changes(filename)
+get_revision_counts(filename)
+convert_doc_to_docx(filename, output_dir=None)  # legacy .doc -> .docx via LibreOffice
 ```
 
 ## Troubleshooting

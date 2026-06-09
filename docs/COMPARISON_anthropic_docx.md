@@ -9,19 +9,34 @@ take fundamentally different architectural approaches.
 
 ---
 
+## Verdict (as of WaDocx 1.4.0)
+
+**WaDocx now wins overall for most practical use.** The two capabilities that
+previously made the Anthropic skill the only choice — **tracked-changes
+authoring** and **comment threads** — are now first-class, validated WaDocx tools
+(plus legacy `.doc` import). WaDocx keeps its structural advantages on top:
+typed/validated tools (lower error surface than hand-editing XML), a stable
+callable API embeddable in non-agent pipelines, and strong markdown
+round-tripping. The skill retains an edge only in *unbounded* OOXML reach — it
+can touch anything the format expresses, whereas WaDocx is bounded by its 87
+tools — and in reading tracked-inserted text inline (it uses pandoc;
+python-docx's `.text` skips `w:ins` content).
+
 ## TL;DR
 
 | | **WaDocx (this repo)** | **Anthropic `docx` skill** |
 |---|---|---|
-| **Form factor** | MCP server (76 tools over stdio/SSE/HTTP) | A *skill*: instructions + helper scripts the agent runs |
+| **Form factor** | MCP server (87 tools over stdio/SSE/HTTP) | A *skill*: instructions + helper scripts the agent runs |
 | **Core engine** | `python-docx` + targeted `lxml`/OOXML | docx-js (create) + raw OOXML unpack/edit/repack (edit) + pandoc + LibreOffice |
 | **Editing model** | Call a named, typed tool (`add_paragraph`, `set_page_setup`, …) | Agent edits unpacked `document.xml` with the Edit tool, then repacks |
-| **Tracked changes / comments** | Comment *reading* only; no tracked-changes authoring | First-class: insert/delete with author attribution, threaded comments |
+| **Tracked changes** | ✅ author + accept + reject + counts (`tracked_search_and_replace`, …) | ✅ via raw XML + `accept_changes.py` |
+| **Comments** | ✅ create + threaded reply + resolve + read | ✅ create + threaded reply (`comment.py`) |
 | **Markdown round-trip** | Yes — strong (`get/replace_document_with_markdown`, fidelity bundle) | Via pandoc, less structured |
-| **PDF / legacy `.doc`** | `convert_to_pdf` (docx2pdf) | LibreOffice (`soffice`) convert + render |
+| **PDF / legacy `.doc`** | `convert_to_pdf` (docx2pdf) + `convert_doc_to_docx` (LibreOffice) | LibreOffice (`soffice`) convert + render |
 | **Determinism** | High — fixed tool surface, validated args | High control, but depends on the agent editing XML correctly |
+| **Unbounded OOXML reach** | Bounded by the 87-tool surface | ✅ anything the format can express |
 | **Setup** | Install server + Python deps, configure MCP client | Needs Node (docx-js), pandoc, LibreOffice, Python |
-| **Best for** | Automated/repeatable pipelines, drafting/revision loops, non-experts | Surgical edits, legal redlines (tracked changes), maximal OOXML control |
+| **Best for** | Automated/repeatable pipelines, drafting + **review/redline** loops, non-experts | Exotic OOXML features no tool exposes; inline reading of tracked text |
 
 ---
 
@@ -47,12 +62,18 @@ contract is the tool signature — the agent never touches XML.
   Figures, SEQ captions, PAGE numbers, OMML equations.
 
 **Limitations**
-- **No tracked-changes authoring** (insertions/deletions with author) and only
-  comment *reading*, not creation — a gap for legal/redline review.
 - Bounded by the tool surface: anything without a tool isn't directly reachable
-  (no arbitrary XML edits).
+  (no arbitrary XML edits) — the skill's main remaining edge.
+- `python-docx`'s `.text` skips `w:ins` content, so `get_document_text` won't
+  show *tracked-inserted* text inline (accept the changes first, or the skill's
+  pandoc `--track-changes=all` reads it directly).
 - `python-docx` semantics leak through for a few operations (e.g. replacing a
   table cell's text collapses multiple paragraphs).
+
+> **Update (1.4.0):** tracked-changes authoring (`tracked_search_and_replace`,
+> `mark_text_as_deleted`, `add_tracked_insertion`, `accept_all_changes`,
+> `reject_all_changes`) and comment authoring (`add_comment`, `reply_to_comment`,
+> `resolve_comment`) are now built in — the former biggest gap is closed.
 
 ### Anthropic `docx` skill
 Not a server but a **skill**: a set of instructions plus helper scripts. It
@@ -84,17 +105,17 @@ treats `.docx` as a ZIP of XML and uses the right tool per job:
 
 ## When to use which
 
-- **Choose WaDocx** when you want *programmatic, repeatable* document generation
-  driven by tool calls — drafting pipelines, report factories, markdown→docx,
-  or when the operator isn't an OOXML expert. Lowest chance of a corrupt file.
-- **Choose the Anthropic skill** when you need **tracked changes / comment
-  threads** (legal redlines, editorial review), surgical edits to a *specific*
-  existing document, or OOXML features no tool exposes — and you have the
+- **Choose WaDocx** for almost everything: *programmatic, repeatable* generation
+  (drafting pipelines, report factories, markdown→docx) **and** document
+  **review/redlining** (tracked changes + comment threads), with the lowest
+  chance of a corrupt file because every operation is a validated tool call.
+- **Choose the Anthropic skill** only when you need OOXML features no WaDocx tool
+  exposes (exotic field codes, unusual structures) or must read tracked-inserted
+  text inline via pandoc — and you already have the Node/pandoc/LibreOffice
   toolchain installed.
-- **They compose.** WaDocx can generate/assemble the document and round-trip
-  markdown; the skill can then layer tracked-change review on top. WaDocx's main
-  capability gap vs. the skill is exactly **tracked-changes authoring + comment
-  creation** — the most valuable area for a future WaDocx tool.
+- **They still compose.** WaDocx can generate/assemble + redline a document; the
+  skill can drop down to raw XML for anything off the beaten path. As of 1.4.0
+  the former capability gap (tracked changes + comment authoring) is closed.
 
 ---
 
@@ -117,11 +138,14 @@ treats `.docx` as a ZIP of XML and uses the right tool per job:
 | Equations (OMML) | ✅ | ✅ |
 | Document statistics | ✅ `get_document_statistics` | ➖ (ad hoc) |
 | Markdown round-trip | ✅ (fidelity bundle) | ➖ via pandoc |
-| **Tracked changes authoring** | ❌ | ✅ |
-| **Comment creation / threads** | ❌ (read only) | ✅ |
+| **Tracked changes authoring** | ✅ insert/delete/replace | ✅ raw XML |
+| **Accept / reject changes** | ✅ `accept_all_changes` / `reject_all_changes` | ✅ `accept_changes.py` |
+| **Comment creation / threads** | ✅ create + reply + resolve | ✅ create + reply |
 | Read comments | ✅ | ✅ |
+| Inline read of tracked-inserted text | ➖ (python-docx skips `w:ins`) | ✅ pandoc `--track-changes` |
 | PDF export | ✅ docx2pdf | ✅ LibreOffice |
-| Legacy `.doc` import | ➖ | ✅ LibreOffice |
+| Legacy `.doc` import | ✅ `convert_doc_to_docx` | ✅ LibreOffice |
+| Unbounded raw-OOXML reach | ➖ (bounded by tool surface) | ✅ |
 | Callable from non-agent code | ✅ (MCP) | ➖ (agent workflow) |
 
 ✅ supported · ➖ partial/indirect · ❌ not supported

@@ -9,12 +9,106 @@ import json
 from typing import Dict, List, Optional, Any
 from docx import Document
 
-from word_document_server.utils.file_utils import ensure_docx_extension
+from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension
 from word_document_server.core.comments import (
     extract_all_comments,
     filter_comments_by_author,
     get_comments_for_paragraph
 )
+from word_document_server.core import comment_authoring as CA
+
+
+async def add_comment(
+    filename: str,
+    comment_text: str,
+    search_text: str = "",
+    paragraph_index: Optional[int] = None,
+    occurrence: int = 1,
+    author: str = "WaDocx",
+    initials: str = "WD",
+) -> str:
+    """Add a comment anchored to text (or a whole paragraph) in a document.
+
+    Provide ``search_text`` to anchor on a phrase, or ``paragraph_index`` to
+    anchor on a whole paragraph. ``occurrence`` selects the Nth match.
+    """
+    filename = ensure_docx_extension(filename)
+    if not os.path.exists(filename):
+        return json.dumps({"success": False, "error": f"Document {filename} does not exist"}, indent=2)
+    is_writeable, error_message = check_file_writeable(filename)
+    if not is_writeable:
+        return json.dumps({"success": False, "error": f"Cannot modify document: {error_message}"}, indent=2)
+    if not comment_text:
+        return json.dumps({"success": False, "error": "comment_text must not be empty"}, indent=2)
+    try:
+        doc = Document(filename)
+        runs, err = CA.find_runs_for_text(doc, search_text, paragraph_index, occurrence)
+        if err:
+            return json.dumps({"success": False, "error": err}, indent=2)
+        comment = CA.create_comment(doc, runs, comment_text, author, initials)
+        doc.save(filename)
+        return json.dumps({
+            "success": True,
+            "comment_id": comment.comment_id,
+            "author": author,
+            "message": f"Comment added to {filename}.",
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"success": False, "error": f"Failed to add comment: {str(e)}"}, indent=2)
+
+
+async def reply_to_comment(
+    filename: str,
+    parent_comment_id: int,
+    comment_text: str,
+    author: str = "WaDocx",
+    initials: str = "WD",
+) -> str:
+    """Reply to an existing comment, creating a threaded conversation in Word."""
+    filename = ensure_docx_extension(filename)
+    if not os.path.exists(filename):
+        return json.dumps({"success": False, "error": f"Document {filename} does not exist"}, indent=2)
+    is_writeable, error_message = check_file_writeable(filename)
+    if not is_writeable:
+        return json.dumps({"success": False, "error": f"Cannot modify document: {error_message}"}, indent=2)
+    try:
+        doc = Document(filename)
+        reply, err = CA.reply_to_comment(doc, int(parent_comment_id), comment_text, author, initials)
+        if err:
+            return json.dumps({"success": False, "error": err}, indent=2)
+        doc.save(filename)
+        return json.dumps({
+            "success": True,
+            "comment_id": reply.comment_id,
+            "parent_comment_id": int(parent_comment_id),
+            "message": f"Reply added to {filename}.",
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"success": False, "error": f"Failed to reply to comment: {str(e)}"}, indent=2)
+
+
+async def resolve_comment(filename: str, comment_id: int, done: bool = True) -> str:
+    """Mark a comment thread as resolved (or reopen it)."""
+    filename = ensure_docx_extension(filename)
+    if not os.path.exists(filename):
+        return json.dumps({"success": False, "error": f"Document {filename} does not exist"}, indent=2)
+    is_writeable, error_message = check_file_writeable(filename)
+    if not is_writeable:
+        return json.dumps({"success": False, "error": f"Cannot modify document: {error_message}"}, indent=2)
+    try:
+        doc = Document(filename)
+        ok, err = CA.resolve_comment(doc, int(comment_id), done)
+        if not ok:
+            return json.dumps({"success": False, "error": err}, indent=2)
+        doc.save(filename)
+        state = "resolved" if done else "reopened"
+        return json.dumps({
+            "success": True,
+            "comment_id": int(comment_id),
+            "message": f"Comment {state} in {filename}.",
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"success": False, "error": f"Failed to resolve comment: {str(e)}"}, indent=2)
 
 
 async def get_all_comments(filename: str) -> str:

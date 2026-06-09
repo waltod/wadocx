@@ -26,7 +26,8 @@ from word_document_server.tools import (
     extended_document_tools,
     comment_tools,
     markdown_tools,
-    iso_template_tools
+    iso_template_tools,
+    revision_tools
 )
 from word_document_server.tools.content_tools import replace_paragraph_block_below_header_tool
 from word_document_server.tools.content_tools import replace_block_between_manual_anchors_tool
@@ -180,6 +181,15 @@ def register_tools():
     def get_document_xml(filename: str):
         """Get the raw XML structure of a Word document."""
         return document_tools.get_document_xml_tool(filename)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Convert Doc To Docx",
+        ),
+    )
+    def convert_doc_to_docx(filename: str, output_dir: str = None):
+        """Convert a legacy .doc (Word 97-2003) file to .docx (needs LibreOffice)."""
+        return document_tools.convert_doc_to_docx(filename, output_dir)
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -1087,6 +1097,142 @@ def register_tools():
     def get_comments_for_paragraph(filename: str, paragraph_index: int):
         """Extract comments for a specific paragraph in a Word document."""
         return comment_tools.get_comments_for_paragraph(filename, paragraph_index)
+
+    # Comment authoring tools
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Add Comment",
+        ),
+    )
+    def add_comment(
+        filename: str,
+        comment_text: str,
+        search_text: str = "",
+        paragraph_index: int = None,
+        occurrence: int = 1,
+        author: str = "WaDocx",
+        initials: str = "WD",
+    ):
+        """Add a comment anchored to text (search_text) or a whole paragraph.
+
+        Provide search_text to anchor on a phrase, or paragraph_index to anchor
+        on a whole paragraph; occurrence selects the Nth match of search_text.
+        """
+        return comment_tools.add_comment(
+            filename, comment_text, search_text, paragraph_index,
+            occurrence, author, initials
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Reply To Comment",
+        ),
+    )
+    def reply_to_comment(
+        filename: str,
+        parent_comment_id: int,
+        comment_text: str,
+        author: str = "WaDocx",
+        initials: str = "WD",
+    ):
+        """Reply to an existing comment, creating a threaded conversation in Word."""
+        return comment_tools.reply_to_comment(
+            filename, parent_comment_id, comment_text, author, initials
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Resolve Comment",
+        ),
+    )
+    def resolve_comment(filename: str, comment_id: int, done: bool = True):
+        """Mark a comment thread as resolved (done=True) or reopen it (done=False)."""
+        return comment_tools.resolve_comment(filename, comment_id, done)
+
+    # Tracked-changes (revision) tools
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Enable Track Changes",
+        ),
+    )
+    def enable_track_changes(filename: str, enabled: bool = True):
+        """Turn Word's document-level 'track changes' setting on or off."""
+        return revision_tools.enable_track_changes(filename, enabled)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Add Tracked Insertion",
+        ),
+    )
+    def add_tracked_insertion(
+        filename: str,
+        text: str,
+        author: str = "WaDocx",
+        date: str = None,
+        style: str = None,
+    ):
+        """Append a new paragraph recorded as a tracked insertion."""
+        return revision_tools.add_tracked_insertion(filename, text, author, date, style)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Mark Text As Deleted",
+        ),
+    )
+    def mark_text_as_deleted(
+        filename: str,
+        search_text: str,
+        author: str = "WaDocx",
+        date: str = None,
+    ):
+        """Mark every occurrence of search_text as a tracked deletion."""
+        return revision_tools.mark_text_as_deleted(filename, search_text, author, date)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Tracked Search And Replace",
+        ),
+    )
+    def tracked_search_and_replace(
+        filename: str,
+        find_text: str,
+        replace_text: str,
+        author: str = "WaDocx",
+        date: str = None,
+    ):
+        """Replace text as a tracked change (deletion of old + insertion of new)."""
+        return revision_tools.tracked_search_and_replace(
+            filename, find_text, replace_text, author, date
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Accept All Changes",
+        ),
+    )
+    def accept_all_changes(filename: str):
+        """Accept every tracked change (keep insertions, drop deletions)."""
+        return revision_tools.accept_all_changes(filename)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Reject All Changes",
+        ),
+    )
+    def reject_all_changes(filename: str):
+        """Reject every tracked change (drop insertions, restore deletions)."""
+        return revision_tools.reject_all_changes(filename)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Get Revision Counts",
+            readOnlyHint=True,
+        ),
+    )
+    def get_revision_counts(filename: str):
+        """Return the number of tracked insertions and deletions (JSON)."""
+        return revision_tools.get_revision_counts(filename)
+
     # New table column width tools
     @mcp.tool(
         annotations=ToolAnnotations(
